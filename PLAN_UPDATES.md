@@ -70,3 +70,11 @@ The original plan's strategy still holds: a reliable pipeline, best-of-N with a 
 - Export: textures embedded in the GLB and shipped as PNGs in the OBJ zip. Repair and watertight checks use a merged geometry-only copy, so UV seams are not mistaken for holes.
 - Also: flat objects (star, gear…) stay on extrude even with AI available, and AI plans get one automatic self-check round that reattaches floating parts.
 - Verified: marble mug + gold handle, wood bottle + silver cap, copper star, glass cup, gold trophy on a black marble base, wooden chair with a red leather seat. 19 tests pass.
+
+# Update 8 (31 Oct 2026, ~H9): Studio, merging sketch input and AI chat
+
+- **🎨 Studio (first tab):** one conversation where every turn can be text, a canvas sketch, an uploaded image, or a mix. The first turn builds from any of them (the vision AI reads sketches and photos); later turns edit the previous result, with attachments used as references for the change ("handles like this sketch") instead of replacing the object. Versions, undo, and downloads per version.
+- Planner: reference images are accepted on edit turns, using the stronger vision model first; a stricter brief borrows only the named aspect from a reference. The self-check keeps the model's real reply.
+- Without a key, or offline: the first turn uses the local engines (sketch → Sketch-CAD / TripoSR, words → templates).
+- "⚙️ Sketch → 3D (engines & details)" stays as the advanced view; its "Refine in the Studio" button hands results over.
+- Verified: sketch photo → trophy; "silver on a black marble base"; "handles like this sketch" (handles changed, trophy kept); "body like this mug" (body only). Live UI: chair → thinner legs + armrests.

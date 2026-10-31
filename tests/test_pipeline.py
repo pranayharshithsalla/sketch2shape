@@ -116,3 +116,12 @@ def test_material_textures(tmp_path, material):
     assert out["report"]["watertight"] and "texture" in out["report"]["colour"]
     box = apply(trimesh.creation.box(extents=[2, 1, 1]), material, (120, 80, 40), 0, 0.5, 1.0, "planar")
     assert box.visual.uv.shape == (len(box.vertices), 2)
+
+
+def test_studio_attachments():
+    """Studio messages: blank canvases are ignored, real sketches/photos become PNG bytes."""
+    from src.designer import image_png
+    assert image_png(None) is None
+    assert image_png({"background": None, "layers": [], "composite": np.zeros((64, 64, 4), np.uint8)}) is None
+    png = image_png(str(EX / "mug.png"))
+    assert png and png[:4] == b"\x89PNG"

@@ -127,19 +127,36 @@ def _unedited_template(draw, prompt) -> bool:
 
 
 def _designer_view(session, history):
+    """Outputs: clear the text box, canvas and upload; show chat, model, files, stats."""
     cur = session.current
     if not cur:
-        return "", history, None, None, "", session
+        return "", None, None, history, None, None, "", session
     rep = cur["report"]
     stats = (f"**Version {len(session.versions)}** · {rep['parts']} parts · {rep['faces']:,} faces · "
              f"{'watertight' if rep['watertight'] else 'open'} · built in {cur['seconds']} s with `{cur['model']}`")
-    return "", history, cur["glb"], cur["files"], stats, session
+    return "", None, None, history, cur["glb"], cur["files"], stats, session
 
 
-def designer_turn(message, history, session):
-    history = list(history or []) + [{"role": "user", "content": message}]
+def _attachment(canvas, upload):
+    """The image sent with this message: an upload wins, else a non-empty canvas."""
+    if upload is not None:
+        return upload
+    return canvas if designer.image_png(canvas) is not None else None
+
+
+def designer_turn(message, canvas, upload, history, session):
+    image = _attachment(canvas, upload)
+    history = list(history or [])
+    if message and message.strip():
+        history.append({"role": "user", "content": message})
+    png = designer.image_png(image)
+    if png is not None:  # show the sketch/photo in the conversation
+        shot = config.OUTPUTS / "_chat" / f"{__import__('uuid').uuid4().hex[:10]}.png"
+        shot.parent.mkdir(parents=True, exist_ok=True)
+        shot.write_bytes(png)
+        history.append({"role": "user", "content": {"path": str(shot)}})
     try:
-        session, reply = designer.turn(session, message)
+        session, reply = designer.turn(session, message, image)
     except Exception as e:
         traceback.print_exc()
         reply = f"⚠️ I couldn't apply that ({str(e)[:200]}). Try rephrasing, or undo."
@@ -154,13 +171,13 @@ def designer_undo(history, session):
 
 
 def designer_new():
-    return "", [], None, None, "", designer.Session()
+    return "", None, None, [], None, None, "", designer.Session()
 
 
 def refine_in_chat(handoff):
-    """Hand an AI-CAD sketch result to the AI Designer so it can be refined in conversation."""
+    """Hand a Sketch → 3D result to the Studio so it can be refined in conversation."""
     if not handoff or not handoff.get("plan"):
-        raise gr.Error("Only AI-CAD results can be refined in chat (needs GEMINI_API_KEY).")
+        raise gr.Error("Only AI-CAD results can be refined in the Studio (needs GEMINI_API_KEY).")
     s = designer.Session()
     s.run_dir = config.OUTPUTS / ("design_from_sketch_" + __import__("time").strftime("%Y%m%d_%H%M%S"))
     s.run_dir.mkdir(parents=True, exist_ok=True)
@@ -208,7 +225,52 @@ def build() -> gr.Blocks:
                     "and get a textured, validated 3D asset (.glb / .obj / .stl).")
         gr.Markdown(_status_md())
         with gr.Tabs() as main_tabs:
-            with gr.Tab("✏️ Sketch → 3D", id="sketch"):
+            with gr.Tab("🎨 Studio: sketch, photo or words → 3D, then refine", id="designer"):
+                gr.Markdown("**Start** with a sketch, a photo, a description, or any mix. **Then keep refining "
+                            "the same model**: type a change, draw it, or upload a reference picture "
+                            "(*make the legs thinner*, *handles like this sketch*, *a body like this photo*). "
+                            "Every turn edits the previous result and is saved as a version you can undo.")
+                with gr.Row():
+                    with gr.Column(scale=5):
+                        chat = gr.Chatbot(label="Conversation", height=380)
+                        with gr.Row():
+                            chat_box = gr.Textbox(show_label=False, scale=5, autofocus=True, lines=2,
+                                                  placeholder="Describe what you want, or what to change "
+                                                              "(optional when you attach a sketch/photo)")
+                            send = gr.Button("Send", variant="primary", scale=1)
+                        gr.Markdown("**✏️ Attach a sketch or 🖼️ image to this message** (optional)")
+                        with gr.Tabs():
+                            with gr.Tab("Draw"):
+                                d_canvas = gr.Sketchpad(type="numpy", canvas_size=(512, 512), height=480,
+                                                        label="Sketch (sent with your next message)",
+                                                        brush=gr.Brush(colors=["#111111"], default_size=4,
+                                                                       color_mode="fixed"))
+                            with gr.Tab("Upload"):
+                                d_upload = gr.Image(type="numpy", image_mode="RGBA", height=480,
+                                                    label="Sketch photo or reference image")
+                        with gr.Row():
+                            undo_btn = gr.Button("↩️ Undo last change")
+                            new_btn = gr.Button("🆕 New design")
+                        gr.Examples(["a wooden chair with 4 legs, no armrests and a backrest",
+                                     "a red sports car with black wheels", "a gold trophy on a black marble base",
+                                     "make the legs thinner", "make the handles look like this sketch",
+                                     "make the body look like this photo", "paint it navy blue",
+                                     "make it twice as tall"],
+                                    inputs=chat_box, label="Try (first an object, then a change)")
+                    with gr.Column(scale=6):
+                        d_model = gr.Model3D(label="Current version (drag to rotate)", height=470,
+                                             clear_color=(0.95, 0.95, 0.97, 1.0))
+                        d_stats = gr.Markdown()
+                        d_files = gr.File(label="Download this version (.glb, .obj zip, .stl)",
+                                          file_count="multiple")
+                session = gr.State(Session())
+                d_out = [chat_box, d_canvas, d_upload, chat, d_model, d_files, d_stats, session]
+                send.click(designer_turn, [chat_box, d_canvas, d_upload, chat, session], d_out)
+                chat_box.submit(designer_turn, [chat_box, d_canvas, d_upload, chat, session], d_out)
+                undo_btn.click(designer_undo, [chat, session], d_out)
+                new_btn.click(designer_new, None, d_out)
+
+            with gr.Tab("⚙️ Sketch → 3D (engines & details)", id="sketch"):
                 with gr.Row():
                     with gr.Column(scale=5):
                         with gr.Tabs() as tabs:
@@ -259,7 +321,7 @@ def build() -> gr.Blocks:
                                            clear_color=(0.95, 0.95, 0.97, 1.0))
                         stats = gr.Markdown()
                         files = gr.File(label="Download (.glb, .obj+mtl zip, .stl)", file_count="multiple")
-                        to_chat = gr.Button("💬 Refine this model in chat", visible=False)
+                        to_chat = gr.Button("🎨 Refine this model in the Studio", visible=False)
                 with gr.Row():
                     pre = gr.Gallery(label="1 · Preprocessing", columns=2, height=220)
                     cands = gr.Gallery(label="2 · Candidates ranked by Sketch Fidelity Score", columns=4, height=220)
@@ -273,39 +335,7 @@ def build() -> gr.Blocks:
                           ).then(make_gif, glb_state, spin)
                 draw_for_me.click(sketch_from_prompt, prompt, [draw, tabs])
 
-            with gr.Tab("💬 AI Designer (chat)", id="designer"):
-                gr.Markdown("Describe **anything** and the AI plans it as parts and builds it in 3D. "
-                            "Not happy? Keep talking: *make the legs thinner*, *add armrests*, "
-                            "*paint the seat red*, *make it twice as tall*. Every turn is a new version "
-                            "you can undo.")
-                with gr.Row():
-                    with gr.Column(scale=5):
-                        chat = gr.Chatbot(label="Conversation", height=470)
-                        with gr.Row():
-                            chat_box = gr.Textbox(show_label=False, scale=5, autofocus=True,
-                                                  placeholder="e.g. a wooden chair with 4 legs and a backrest")
-                            send = gr.Button("Send", variant="primary", scale=1)
-                        with gr.Row():
-                            undo_btn = gr.Button("↩️ Undo last change")
-                            new_btn = gr.Button("🆕 New design")
-                        gr.Examples(["a wooden chair with 4 legs, no armrests and a backrest",
-                                     "a red sports car with black wheels", "a cute robot with a round head and antenna",
-                                     "a snowman with a carrot nose and black hat", "make the legs thinner",
-                                     "add armrests", "paint it navy blue", "make it twice as tall"],
-                                    inputs=chat_box, label="Try (first an object, then a change)")
-                    with gr.Column(scale=6):
-                        d_model = gr.Model3D(label="Current version (drag to rotate)", height=470,
-                                             clear_color=(0.95, 0.95, 0.97, 1.0))
-                        d_stats = gr.Markdown()
-                        d_files = gr.File(label="Download this version (.glb, .obj zip, .stl)",
-                                          file_count="multiple")
-                session = gr.State(Session())
-                d_out = [chat_box, chat, d_model, d_files, d_stats, session]
-                send.click(designer_turn, [chat_box, chat, session], d_out)
-                chat_box.submit(designer_turn, [chat_box, chat, session], d_out)
-                undo_btn.click(designer_undo, [chat, session], d_out)
-                to_chat.click(refine_in_chat, handoff, d_out + [main_tabs])
-                new_btn.click(designer_new, None, d_out)
+        to_chat.click(refine_in_chat, handoff, d_out + [main_tabs])
     return demo
 
 

@@ -89,13 +89,25 @@ Round vessels/cups/bases/stems should be lathe parts with smooth profiles. Handl
 (points along the handle's centre line, attached to the body at both ends)."""
 
 
-def _ask(model: str, prompt: str, image_png: bytes | None = None) -> dict:
+EDIT_IMAGE_BRIEF = """The attached image is a REFERENCE the user shared with this change request
+(a sketch or a photo). It is NOT a new object to build. Borrow ONLY the aspect the request
+names from it (e.g. "the handle like this" -> copy that handle's shape onto the CURRENT
+object's handles; "this colour" -> use its colour; "this profile" -> reshape that part).
+KEEP the current object's type, name and every other part exactly as they are.
+Only if the request explicitly says to replace/rebuild/start over from the image, build the
+object in the image instead."""
+
+
+def _ask(model: str, prompt: str, image_png: bytes | None = None, editing: bool = False) -> dict:
     parts = [{"text": prompt}]
     if image_png is not None:
         import base64
-        parts = [{"text": SKETCH_BRIEF},
-                 {"inline_data": {"mime_type": "image/png", "data": base64.b64encode(image_png).decode()}},
-                 {"text": f"User's description: {prompt or '(none: infer it from the sketch)'}"}]
+        img = {"inline_data": {"mime_type": "image/png", "data": base64.b64encode(image_png).decode()}}
+        if editing:  # prompt already holds CURRENT PLAN + conversation + CHANGE REQUEST
+            parts = [{"text": EDIT_IMAGE_BRIEF}, img, {"text": prompt}]
+        else:
+            parts = [{"text": SKETCH_BRIEF}, img,
+                     {"text": f"User's description: {prompt or '(none: infer it from the sketch)'}"}]
     body = {"systemInstruction": {"parts": [{"text": SYSTEM}]},
             "contents": [{"parts": parts}],
             "generationConfig": {"temperature": 0.3, "responseMimeType": "application/json"}}
@@ -122,14 +134,16 @@ def plan(prompt: str, current: dict | None = None,
          history: list[tuple[str, str]] | None = None,
          sketch_png: bytes | None = None) -> tuple[dict, str]:
     """-> (plan dict, model used). With `current`, the request edits that plan. With
-    `sketch_png`, the model reads the sketch and rebuilds it as an idealised part plan."""
+    `sketch_png` (a sketch or photo), a new plan is read from the image, or, when editing,
+    the image is a reference for the change ("make the handle like this")."""
     text = _request_text(prompt, current, history)
     errs = []
     # a new design is worth the stronger model (richer structure); edits use the fast one first
-    order = PLANNER_MODELS if current else sorted(PLANNER_MODELS, key=lambda m: m != STRONG_MODEL)
+    order = (PLANNER_MODELS if current and sketch_png is None
+             else sorted(PLANNER_MODELS, key=lambda m: m != STRONG_MODEL))
     for m in order:
         try:
-            spec = with_retries(_ask, m, text, sketch_png if not current else None,
+            spec = with_retries(_ask, m, text, sketch_png, bool(current),
                                 name=f"planner:{m}", retries=0)
             if not isinstance(spec, dict) or not spec.get("parts"):
                 raise ProviderError("plan has no parts")
@@ -180,7 +194,7 @@ def _self_check(spec: dict, model: str) -> dict:
             "Move/resize ONLY what is needed so every part is attached (touching or slightly "
             "overlapping its neighbour). Keep the design, colours and proportions.", spec, []))
         if isinstance(fix, dict) and fix.get("parts") and len(floating_parts(fix)) < len(loose):
-            fix.setdefault("reply", spec.get("reply"))
+            fix["reply"] = spec.get("reply") or fix.get("reply")  # the user sees the real answer
             log.info("self-check reattached %d floating part(s)", len(loose) - len(floating_parts(fix)))
             return fix
     except Exception as e:
