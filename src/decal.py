@@ -179,6 +179,8 @@ def bake(glb: str, out_glb: str | Path, decal: Image.Image, x: float = 0.5, y: f
     depth, gxs, gys = _depth_map(meshes, R, rect)
     tol = 0.02 * (hi[2] - lo[2]) + 1e-4
 
+    from .export import part_names
+    names = part_names(meshes)
     out, touched, texels = trimesh.Scene(), 0, 0
     for i, g in enumerate(meshes):
         p = g.vertices[g.faces] @ R.T
@@ -186,7 +188,7 @@ def bake(glb: str, out_glb: str | Path, decal: Image.Image, x: float = 0.5, y: f
         cand = (fn > 0.12) & (p[..., 0].max(1) >= rect[0][0]) & (p[..., 0].min(1) <= rect[0][1]) \
             & (p[..., 1].max(1) >= rect[1][0]) & (p[..., 1].min(1) <= rect[1][1])
         if not cand.any():
-            out.add_geometry(g, geom_name=f"part_{i}")
+            out.add_geometry(g, geom_name=names[i])
             continue
         m, atlas, uv, mat, textured = _with_atlas(g, R)
         AH, AW = atlas.shape[:2]
@@ -237,9 +239,9 @@ def bake(glb: str, out_glb: str | Path, decal: Image.Image, x: float = 0.5, y: f
             texels += wrote
             m.visual = trimesh.visual.TextureVisuals(
                 uv=uv, material=_material(mat, (acc * 255).round().astype(np.uint8), textured))
-            out.add_geometry(m, geom_name=f"part_{i}")
+            out.add_geometry(m, geom_name=names[i])
         else:
-            out.add_geometry(g, geom_name=f"part_{i}")
+            out.add_geometry(g, geom_name=names[i])
     if not touched:
         raise ValueError("The decal missed the model: move it onto the object or pick another side.")
     out_glb = Path(out_glb)

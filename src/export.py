@@ -27,6 +27,20 @@ def _has_colour(g: trimesh.Trimesh) -> str:
     return "none"
 
 
+def part_names(meshes) -> list[str]:
+    """Stable, unique names for the parts (the planner's '03_handle' etc. survive every export,
+    so parts can be picked by name later, e.g. to recolour them)."""
+    out, seen = [], set()
+    for i, m in enumerate(meshes):
+        n = str(m.metadata.get("name") or f"part_{i}")
+        base, k = n, 2
+        while n in seen:
+            n, k = f"{base}_{k}", k + 1
+        seen.add(n)
+        out.append(n)
+    return out
+
+
 def geometry_only(g: trimesh.Trimesh) -> trimesh.Trimesh:
     """Same faces (same order) with duplicate vertices merged. Textured meshes duplicate
     vertices along UV seams, which makes a closed solid *look* open to connectivity checks."""
@@ -83,10 +97,11 @@ def finalize(raw_glb: str, out_dir: Path, name: str = "model") -> dict:
     hi = np.max([m.bounds[1] for m in meshes], axis=0)
     scale = 1.0 / max((hi - lo).max(), 1e-9)
     out = trimesh.Scene()
-    for i, m in enumerate(meshes):
+    for m, name in zip(meshes, part_names(meshes)):
         m.apply_translation(-(lo + hi) / 2)
         m.apply_scale(scale)
-        out.add_geometry(m, geom_name=f"part_{i}")
+        m.metadata["name"] = name
+        out.add_geometry(m, geom_name=name)
     geometry_only = trimesh.util.concatenate([trimesh.Trimesh(m.vertices, m.faces, process=False)
                                               for m in meshes])
 

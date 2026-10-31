@@ -104,3 +104,22 @@ def test_rest_api_generate_decal_and_ar(tmp_path):
     d = c.post("/api/decal", data={"model": r["files"]["glb"], "text": "API"}).json()
     assert "texture" in d["validation"]["colour"]
     assert c.get("/models/../.env").status_code == 404
+
+
+# ---------------------------------------------------------------- recolouring parts
+def test_recolor_several_parts_keeps_the_rest(tmp_path):
+    from src import designer
+    from src.recolor import list_parts
+    r = run(None, "a white teapot with a gold lid and blue spout", run_name="pytest_recolor")
+    s = designer.Session()
+    designer.add_version(s, r.glb, [r.glb], r.report, "teapot", r.mesh_provider, "local", 1.0)
+    before = {p["name"]: p["colour"] for p in list_parts(r.glb)}
+    pick = [n for n in before if "spout" in n or "handle" in n]
+    assert len(pick) == 2, before  # part names survive export
+    s, msg = designer.recolor_parts(s, pick, "#E0115F")
+    after = {p["name"]: p["colour"] for p in list_parts(s.current["glb"])}
+    for n in pick:
+        assert abs(int(after[n][1:3], 16) - 0xE0) < 12, after
+    for n in set(before) - set(pick):
+        assert after[n] == before[n], (n, before[n], after[n])
+    assert s.current["kind"] == "colour" and len(s.versions) == 2

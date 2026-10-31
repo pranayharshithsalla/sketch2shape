@@ -202,6 +202,7 @@ def refine(glb: str, analysis, out_glb: str | Path, pitch_px: float = 1.0, stric
                 _, nn = cKDTree(mp.vertices).query(new.vertices)
                 new.visual = trimesh.visual.ColorVisuals(
                     new, vertex_colors=np.c_[cols_src[nn], np.full(len(nn), 255)].astype(np.uint8))
+                new.metadata["name"] = mp.metadata.get("name") or f"part_{k}"
                 kept.append(new)
             carved_parts += 1
         else:
@@ -244,16 +245,19 @@ def refine(glb: str, analysis, out_glb: str | Path, pitch_px: float = 1.0, stric
             _, nn = cKDTree(src.vertices).query(new.vertices)
             new.visual = trimesh.visual.ColorVisuals(
                 new, vertex_colors=np.c_[cols_src[nn], np.full(len(nn), 255)].astype(np.uint8))
+            new.metadata["name"] = "added_detail"
             kept.append(new)
 
     strings = 0
     if fam_px is not None:
         tubes = _string_tubes(analysis, occ_all, origin, pitch_px, H, solid)
         if tubes is not None:
+            tubes.metadata["name"] = "strings"
             kept.append(tubes)
             strings = sum(len(f["lines"]) for f in analysis.families)
-    for k, m in enumerate(kept):
-        out.add_geometry(m, geom_name=f"part_{k}")
+    from .export import part_names
+    for m, name in zip(kept, part_names(kept)):
+        out.add_geometry(m, geom_name=name)
     out_glb = Path(out_glb)
     out_glb.parent.mkdir(parents=True, exist_ok=True)
     out.export(out_glb)

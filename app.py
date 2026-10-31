@@ -30,6 +30,7 @@ EXAMPLE_PROMPTS = {
 }
 EXAMPLES = [[str(p), EXAMPLE_PROMPTS.get(p.stem, "")] for p in sorted(config.EXAMPLES.glob("*.png"))]
 SERVER = {"port": 7860, "ar": False}  # set at launch; AR links need the LAN-served FastAPI app
+KEEP_FINISH = "keep current finish"
 CONTROLS = [("Shape + style", "both"), ("Shape only", "shape"), ("Style & colour only", "style")]
 
 
@@ -187,6 +188,29 @@ def _acc_images(cur) -> list:
     return out
 
 
+def _parts_view(cur):
+    """Checkbox choices for the Colours panel: every part (with its colour), plus 'all petals'-style
+    groups when several parts share a name."""
+    from src.recolor import groups, list_parts
+    try:
+        parts = list_parts(cur.get("plain_glb") or cur["glb"])
+    except Exception:
+        parts = []
+    choices = [(f"{p['label']}  ·  {p['colour']}", p["name"]) for p in parts]
+    choices += [(f"▣ {g}", "group:" + "|".join(v)) for g, v in groups(parts).items()]
+    return gr.CheckboxGroup(choices=choices, value=[]), _swatches(parts)
+
+
+def _swatches(parts) -> str:
+    if not parts:
+        return '<div class="k" style="color:var(--text-2)">Build a model to list its parts.</div>'
+    chips = "".join(
+        f'<span style="display:inline-flex;align-items:center;gap:6px;margin:3px 10px 3px 0;font-size:12px;'
+        f'color:var(--text-2)"><span style="width:14px;height:14px;border-radius:4px;background:{p["colour"]};'
+        f'border:1px solid var(--border);display:inline-block"></span>{p["label"]}</span>' for p in parts)
+    return f'<div>{chips}</div>'
+
+
 def _designer_view(session, history):
     """Outputs (in d_out order): clear inputs, chat, model, download, files, metrics, title,
     create-button label, session, version timeline, validation report, AR QR, AR text,
@@ -196,7 +220,8 @@ def _designer_view(session, history):
         return ("", _canvas_reset(), None, history, None, gr.DownloadButton(value=None, interactive=False),
                 None, metrics_html(None, None, None, None), panel_title("3D Preview", "nothing yet"),
                 gr.Button(value="Create 3D Shape"), session, gr.Radio(choices=[], value=None), None,
-                None, "", accuracy_md(None), [], gr.Checkbox(value=False, interactive=False))
+                None, "", accuracy_md(None), [], gr.Checkbox(value=False, interactive=False),
+                gr.CheckboxGroup(choices=[], value=[]), _swatches([]))
     rep = cur["report"]
     title = panel_title("3D Preview", f'<span class="badge">v{len(session.versions)} · {cur["model"]}</span>')
     tl = designer.timeline(session)
@@ -209,7 +234,8 @@ def _designer_view(session, history):
             metrics_html(cur.get("accuracy"), bool(rep.get("watertight")), rep.get("parts"), cur.get("seconds")),
             title, gr.Button(value="Update 3D Shape"), session, gr.Radio(choices=tl, value=tl[-1]), report,
             qr, ar_md, accuracy_md(cur.get("accuracy_report")), _acc_images(cur),
-            gr.Checkbox(value=False, interactive=bool(cur.get("raw_glb"))))
+            gr.Checkbox(value=False, interactive=bool(cur.get("raw_glb"))),
+            *_parts_view(cur))
 
 
 def _attachment(mode, canvas, upload):
@@ -277,7 +303,7 @@ def decal_live(text, logo, font, color, side, x, y, size, rot, move, history, se
     """Slider released with 'live move' on: re-place the last decal (like dragging it)."""
     cur = session.current if session else None
     if not move or not cur or cur.get("kind") != "decal":
-        return [gr.skip()] * 18
+        return [gr.skip()] * 20
     return designer_decal(text, logo, font, color, side, x, y, size, rot, True, history, session)
 
 
@@ -415,6 +441,28 @@ def studio_show_raw(show, session):
     if not cur:
         return gr.skip()
     return cur["raw_glb"] if show and cur.get("raw_glb") else cur["glb"]
+
+
+def studio_recolor(picked, colour, material, history, session):
+    names = []
+    for v in picked or []:
+        names += v[len("group:"):].split("|") if v.startswith("group:") else [v]
+    names = list(dict.fromkeys(names))
+    try:
+        session, reply = designer.recolor_parts(session, names, _hex(colour),
+                                                None if material in (None, "", KEEP_FINISH) else material)
+    except Exception as e:
+        traceback.print_exc()
+        reply = f"⚠️ Couldn't recolour: {str(e)[:200]}"
+    return _designer_view(session, _say(history, reply))
+
+
+def studio_select_all(session):
+    cur = session.current if session else None
+    if not cur:
+        return gr.skip()
+    from src.recolor import list_parts
+    return gr.CheckboxGroup(value=[p["name"] for p in list_parts(cur.get("plain_glb") or cur["glb"])])
 
 
 def studio_spin(session):
@@ -568,6 +616,16 @@ def build() -> gr.Blocks:
                             compare_note = gr.HTML(visible=False)
                             compare_model = gr.Model3D(visible=False, height=300, show_label=False,
                                                        clear_color=(0.075, 0.114, 0.212, 1.0))
+                        with gr.Accordion("🎨 Colours & materials · pick one or more parts", open=False):
+                            parts_html = gr.HTML(_swatches([]))
+                            parts_cb = gr.CheckboxGroup(choices=[], label="Parts to recolour", elem_id="parts")
+                            with gr.Row():
+                                part_colour = gr.ColorPicker("#E0115F", label="New colour", scale=1)
+                                part_mat = gr.Dropdown([KEEP_FINISH] + sorted(__import__("src.textures", fromlist=["SPECS"]).SPECS),
+                                                       value=KEEP_FINISH, label="Material", scale=2)
+                            with gr.Row():
+                                select_all = gr.Button("Select all parts", size="sm")
+                                recolor_btn = gr.Button("Apply colour", variant="primary", size="sm")
                         with gr.Accordion("🔤 Text & logo · baked into the texture", open=False):
                             with gr.Row():
                                 dec_text = gr.Textbox(label="Text", placeholder="e.g. BRAND NAME", scale=3)
@@ -604,7 +662,8 @@ def build() -> gr.Blocks:
                 session = gr.State(Session())
                 cam = gr.State([45.0, 75.0, None])
                 d_out = [chat_box, d_canvas, d_upload, chat, d_model, d_dl, d_files, d_metrics, d_title,
-                         create_btn, session, versions, d_report, ar_qr, ar_md, acc_md, acc_imgs, raw_chk]
+                         create_btn, session, versions, d_report, ar_qr, ar_md, acc_md, acc_imgs, raw_chk,
+                         parts_cb, parts_html]
                 turn_in = [mode, chat_box, d_canvas, d_upload, control, chat, session]
                 create_btn.click(designer_turn, turn_in, d_out)
                 chat_box.submit(designer_turn, turn_in, d_out)
@@ -626,6 +685,8 @@ def build() -> gr.Blocks:
                 hole_img.select(studio_toggle_hole, session, [hole_img, session])
                 proc_chk.change(studio_procedural, [proc_chk, session], session)
                 raw_chk.change(studio_show_raw, [raw_chk, session], d_model)
+                recolor_btn.click(studio_recolor, [parts_cb, part_colour, part_mat, chat, session], d_out)
+                select_all.click(studio_select_all, session, parts_cb)
                 undo_btn.click(designer_undo, [chat, session], d_out)
                 new_btn.click(designer_new, None, d_out)
                 mode.change(switch_mode, [mode, session], [d_canvas, d_upload, d_explain, chat_box])

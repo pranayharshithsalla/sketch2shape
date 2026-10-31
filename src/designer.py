@@ -7,6 +7,7 @@ image) to the planner, rebuilds the model and saves a numbered version that can 
 from __future__ import annotations
 
 import copy
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -271,6 +272,44 @@ def add_decal(session: Session, text: str = "", logo=None, color: str = "#FFFFFF
                      "It is part of the .glb, so it shows in any viewer and survives later edits.")
 
 
+def recolor_parts(session: Session, names: list[str], colour: str,
+                  material: str | None = None) -> tuple[Session, str]:
+    """Recolour one or many parts of the current model as a new version. Baked decals are
+    re-applied on top, and the AI plan is updated so later AI edits keep the new colours."""
+    from .recolor import label, recolor
+    cur = session.current
+    if not cur:
+        return session, "Create a model first, then pick the parts to recolour."
+    if not names:
+        return session, "Tick at least one part to recolour."
+    t0 = time.time()
+    n = len(session.versions) + 1
+    vdir = session.run_dir / f"v{n}"
+    vdir.mkdir(parents=True, exist_ok=True)
+    plain = cur.get("plain_glb") or cur["glb"]
+    res = recolor(plain, vdir / "recoloured.glb", names, colour, material)
+    out_plain = finalize(res["glb"], vdir, name=f"model_v{n}_plain")
+    decals = list(cur.get("decals") or [])
+    out = _rebake(out_plain["glb"], decals, vdir, n) if decals else finalize(out_plain["glb"], vdir, name=f"model_v{n}")
+    plan = copy.deepcopy(cur.get("plan"))
+    if plan and plan.get("parts"):
+        for nm in res["changed"]:
+            m = re.match(r"^(\d+)_", nm)
+            if m and int(m.group(1)) < len(plan["parts"]):
+                p = plan["parts"][int(m.group(1))]
+                p["color"] = colour
+                if material:
+                    p["material"] = material
+    what = ", ".join(label(x) for x in res["changed"][:6]) + (" …" if len(res["changed"]) > 6 else "")
+    session.versions.append({**cur, "plan": plan, "glb": out["glb"], "plain_glb": out_plain["glb"],
+                             "files": [out["glb"], out["obj_zip"], out["stl"]], "report": out["report"],
+                             "kind": "colour", "prompt": f"colour {what} {colour}{' ' + material if material else ''}",
+                             "seconds": round(time.time() - t0, 1), "raw_glb": None})
+    session.history.append((f"(recolour {what} → {colour}{' ' + material if material else ''})", "Done."))
+    return session, (f"🎨 Recoloured {len(res['changed'])} part(s): {what} → {colour}"
+                     f"{' (' + material + ')' if material else ''}. Saved as v{n}; undo or revert any time.")
+
+
 def add_version(session: Session, glb: str, files: list, report: dict, prompt: str, model: str, kind: str,
                 seconds: float | None, plan: dict | None = None, accuracy: float | None = None) -> None:
     """Record a model made outside the planner (candidate → 3D, local engines) as a version."""
@@ -297,7 +336,7 @@ def revert(session: Session, index: int) -> tuple[Session, str]:
 
 
 ICONS = {"prompt": "💬", "sketch": "✏️", "photo": "📷", "decal": "🔤", "revert": "↩️", "candidate": "🎲",
-         "local": "🧩"}
+         "local": "🧩", "colour": "🎨"}
 
 
 def timeline(session: Session) -> list[str]:
