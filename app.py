@@ -87,8 +87,12 @@ def generate(draw, upload, prompt, material, n_cands, img_prov, mesh_prov, skip_
         + " · ".join(f"{k} {v}s" for k, v in r.timings.items() if k != "total")
     )
     pre = [(r.images["sketch_clean"], "cleaned sketch"), (r.images["sketch_mask"], "filled silhouette")]
+    handoff = {"plan": r.plan, "glb": r.glb, "files": [r.glb, r.obj_zip, r.stl], "report": r.report,
+               "prompt": prompt or r.caption or "my sketch", "model": r.mesh_provider,
+               "seconds": r.timings.get("total")}
     return (pre, r.candidates, r.glb, [r.glb, r.obj_zip, r.stl], stats,
-            "\n".join(r.logs) + f"\n\nSaved to {r.run_dir}", r.glb, None)
+            "\n".join(r.logs) + f"\n\nSaved to {r.run_dir}", r.glb, None, handoff,
+            gr.Button(visible=bool(r.plan)))
 
 
 def sketch_from_prompt(prompt):
@@ -153,6 +157,22 @@ def designer_new():
     return "", [], None, None, "", designer.Session()
 
 
+def refine_in_chat(handoff):
+    """Hand an AI-CAD sketch result to the AI Designer so it can be refined in conversation."""
+    if not handoff or not handoff.get("plan"):
+        raise gr.Error("Only AI-CAD results can be refined in chat (needs GEMINI_API_KEY).")
+    s = designer.Session()
+    s.run_dir = config.OUTPUTS / ("design_from_sketch_" + __import__("time").strftime("%Y%m%d_%H%M%S"))
+    s.run_dir.mkdir(parents=True, exist_ok=True)
+    s.versions.append(dict(handoff))
+    msg = f"Built from your sketch: {handoff['plan'].get('object', 'object')}. Tell me what to change."
+    s.history.append((handoff["prompt"], msg))
+    history = [{"role": "user", "content": f"(sketch) {handoff['prompt']}"},
+               {"role": "assistant", "content": msg}]
+    view = _designer_view(s, history)
+    return (*view, gr.Tabs(selected="designer"))
+
+
 def make_gif(glb):
     """Runs after the model is shown, so the spin preview never delays the main result."""
     if not glb:
@@ -169,7 +189,7 @@ def build() -> gr.Blocks:
         gr.Markdown("# ✏️ → 🧊 Sketch2Shape\nDraw or upload a sketch, **or just type what you want**, "
                     "and get a textured, validated 3D asset (.glb / .obj / .stl).")
         gr.Markdown(_status_md())
-        with gr.Tabs():
+        with gr.Tabs() as main_tabs:
             with gr.Tab("✏️ Sketch → 3D", id="sketch"):
                 with gr.Row():
                     with gr.Column(scale=5):
@@ -199,7 +219,8 @@ def build() -> gr.Blocks:
                                         label="Examples: click one, then Generate (opens in the Upload tab)")
                         material = gr.Dropdown(["auto"] + sorted(MATERIALS), value="auto", label="Material preset")
                         mesh_prov = gr.Dropdown(
-                            [("Auto (CAD for lathe/flat objects, else best available AI)", "auto"),
+                            [("Auto (AI-CAD if a Gemini key is set, else CAD / local AI)", "auto"),
+                             ("AI-CAD: AI reads your sketch and rebuilds it as clean CAD (Gemini key)", "ai_cad"),
                              ("Revolve: lathe objects (mug, vase, bottle, lamp)", "revolve"),
                              ("Extrude: flat objects (sign, logo, gear, star)", "extrude"),
                              ("Inflate: organic shapes (toys, animals)", "inflate"),
@@ -220,15 +241,17 @@ def build() -> gr.Blocks:
                                            clear_color=(0.95, 0.95, 0.97, 1.0))
                         stats = gr.Markdown()
                         files = gr.File(label="Download (.glb, .obj+mtl zip, .stl)", file_count="multiple")
+                        to_chat = gr.Button("💬 Refine this model in chat", visible=False)
                 with gr.Row():
                     pre = gr.Gallery(label="1 · Preprocessing", columns=2, height=220)
                     cands = gr.Gallery(label="2 · Candidates ranked by Sketch Fidelity Score", columns=4, height=220)
                     spin = gr.Image(label="3 · 360° turntable (rendered after the model)", height=220, type="filepath")
                 log = gr.Textbox(label="Pipeline log", lines=10, max_lines=30)
                 glb_state = gr.State()
+                handoff = gr.State()
 
                 btn.click(generate, [draw, upload, prompt, material, n_cands, img_prov, mesh_prov, skip_2d, seed],
-                          [pre, cands, model, files, stats, log, glb_state, spin]
+                          [pre, cands, model, files, stats, log, glb_state, spin, handoff, to_chat]
                           ).then(make_gif, glb_state, spin)
                 draw_for_me.click(sketch_from_prompt, prompt, [draw, tabs])
 
@@ -263,6 +286,7 @@ def build() -> gr.Blocks:
                 send.click(designer_turn, [chat_box, chat, session], d_out)
                 chat_box.submit(designer_turn, [chat_box, chat, session], d_out)
                 undo_btn.click(designer_undo, [chat, session], d_out)
+                to_chat.click(refine_in_chat, handoff, d_out + [main_tabs])
                 new_btn.click(designer_new, None, d_out)
     return demo
 

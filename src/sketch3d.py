@@ -29,6 +29,7 @@ LATHE_WORDS = {"mug", "cup", "vase", "bottle", "glass", "goblet", "bowl", "jar",
 CONTAINER_WORDS = {"mug", "cup", "vase", "bowl", "jar", "pot", "glass", "goblet", "bucket",
                    "tumbler", "jug", "urn", "wine", "flask", "pitcher", "teacup", "beaker", "carafe",
                    "chalice", "planter", "flowerpot"}
+SPOUT_WORDS = {"teapot", "kettle", "jug", "pitcher", "watering", "gravy", "carafe"}
 FLAT_WORDS = {"sign", "logo", "letter", "coin", "medal", "badge", "gear", "cookie", "plate",
               "key", "star", "heart", "leaf", "card", "token", "emblem", "tile", "shield"}
 
@@ -198,7 +199,7 @@ def _piecewise_constant(r: np.ndarray, tol: float) -> np.ndarray:
 
 # ------------------------------------------------------------------ builders
 def revolve(mask: np.ndarray, hollow: bool, sections: int = 96,
-            mods: dict | None = None) -> tuple[trimesh.Trimesh, np.ndarray, dict]:
+            mods: dict | None = None, strokes: np.ndarray | None = None) -> tuple[trimesh.Trimesh, np.ndarray, dict]:
     """Returns (mesh in pixel units, y-up), a mask of attached parts (handles) to add, and
     profile info (cap split height, top, bottom) for per-part materials."""
     H, W = mask.shape
@@ -208,16 +209,18 @@ def revolve(mask: np.ndarray, hollow: bool, sections: int = 96,
     # A handle pulls the mirror axis towards itself, which pushes part of the cap/neck off-axis
     # (it then turns into lumps). Find the handle, drop it, and re-estimate the axis on the body.
     axis = lathe_axis(mask)
+    if strokes is not None and strokes.any():
+        mask, strokes, axis = _straighten(mask, strokes, axis)
     core = mask
     for _ in range(2):
-        sym, res0 = _symmetric_part(core, axis)
+        sym, res0 = _symmetric_part(core, axis, strokes)
         big = _large_parts(res0, core, sym)
         if not big.any():
             break
         core = mask & ~cv2.dilate(big.astype(np.uint8), np.ones((9, 9), np.uint8)).astype(bool)
         core = _largest_component(core)
         axis = lathe_axis(core)
-    ys, r = _body_radius(core, axis)
+    ys, r = _body_radius(core, axis, strokes)
     # A flat base drawn in perspective is a curve, which reads as a taper; if the profile
     # only narrows in the bottom ~12% of the height, hold the radius (flat base)
     n_base = max(2, int(0.12 * len(r)))
@@ -289,26 +292,104 @@ def revolve(mask: np.ndarray, hollow: bool, sections: int = 96,
     mesh.fix_normals()
 
     # residual = silhouette parts outside the revolved body's silhouette (e.g. a handle)
-    body, _ = _symmetric_part(core, axis)
+    body, _ = _symmetric_part(core, axis, strokes)
     residual = mask & ~cv2.dilate(body.astype(np.uint8), np.ones((5, 5), np.uint8)).astype(bool)
     residual = cv2.morphologyEx(residual.astype(np.uint8), cv2.MORPH_OPEN, np.ones((5, 5), np.uint8)) > 0
     parts = _large_parts(residual, mask, body)
     # translate mesh so its axis sits at image column `axis`
     mesh.apply_translation([axis, 0, 0])
-    info = {"cap_h": cap_h, "top": float(top), "bot": float(bot), "hollow": hollow}
+    info = {"cap_h": cap_h, "top": float(top), "bot": float(bot), "hollow": hollow,
+            "strokes": strokes}  # straightened strokes, same frame as the returned parts
     return mesh, parts, info
 
 
-def _body_radius(mask: np.ndarray, axis: float) -> tuple[np.ndarray, np.ndarray]:
-    """Per-row body radius: the nearer edge, so a handle or spout on one side is ignored."""
+def _wall_positions(strokes: np.ndarray, ys: np.ndarray, axis: float) -> tuple[np.ndarray, np.ndarray]:
+    """Per-row x of the outer edge of the FIRST steep drawn line left and right of the axis
+    (the body walls). Handles drawn outside the walls don't count, even on both sides
+    (trophy, kettle). Only steep lines are walls: rim ellipses, rim lines and lids inside
+    the body are mostly horizontal. NaN where a row is unusable."""
+    a = int(round(axis))
+    W = strokes.shape[1]
+    left = np.full(len(ys), np.nan, np.float32)
+    right = np.full(len(ys), np.nan, np.float32)
+    s8 = strokes.astype(np.uint8) * 255
+    gx = np.abs(cv2.Sobel(s8, cv2.CV_32F, 1, 0, ksize=3))
+    gy = np.abs(cv2.Sobel(s8, cv2.CV_32F, 0, 1, ksize=3))
+    steep = ((gx > 0) & (gx >= 0.7 * gy)).astype(np.uint8)
+    steep = (cv2.dilate(steep, np.ones((5, 5), np.uint8)) > 0) & strokes
+    for i, y in enumerate(ys):
+        row, wall_row = strokes[y], steep[y]
+        if a < 0 or a >= W or row[a]:
+            continue
+        found = []
+        for step in (-1, 1):
+            x = a
+            while 0 <= x < W and not wall_row[x]:
+                x += step
+            if not (0 <= x < W):
+                break
+            while 0 <= x < W and row[x]:  # cross the wall to its outer edge
+                x += step
+            found.append(x)
+        if len(found) == 2:
+            left[i], right[i] = found
+    return left, right
+
+
+def _straighten(mask: np.ndarray, strokes: np.ndarray, axis: float):
+    """Hand-drawn lathe objects lean (a trophy cup drawn 20 px left of its stem). Shift each
+    row so the midpoint between its walls sits on one vertical axis; handles move with
+    their rows. Returns (mask, strokes, axis)."""
+    ys = np.where(mask.any(1))[0]
+    left, right = _wall_positions(strokes, ys, axis)
+    ok = ~np.isnan(left)
+    if ok.sum() < 0.4 * len(ys):
+        return mask, strokes, axis
+    mid = (left + right) / 2
+    idx = np.arange(len(ys))
+    mid = np.interp(idx, idx[ok], mid[ok])
+    from scipy.ndimage import median_filter
+    mid = median_filter(mid, size=max(5, (len(ys) // 20) | 1), mode="nearest")
+    target = float(np.median(mid))
+    W = mask.shape[1]
+    shifts = np.clip(np.round(target - mid), -0.15 * W, 0.15 * W).astype(int)
+    if np.abs(shifts).max() < 2:
+        return mask, strokes, axis
+    m2, s2 = np.zeros_like(mask), np.zeros_like(strokes)
+    for y, d in zip(ys, shifts):
+        if d >= 0:
+            m2[y, d:], s2[y, d:] = mask[y, :W - d], strokes[y, :W - d]
+        else:
+            m2[y, :W + d], s2[y, :W + d] = mask[y, -d:], strokes[y, -d:]
+    return m2, s2, target
+
+
+def _body_radius(mask: np.ndarray, axis: float,
+                 strokes: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
+    """Per-row body radius. From the silhouette: the nearer edge, which ignores a handle on
+    one side. With strokes, also capped by the drawn wall, which handles protrusions on
+    BOTH sides. Falls back to the silhouette for filled (non-line) drawings."""
     ys, xl, xr = _rows(mask)
-    return ys, np.clip(np.minimum(axis - xl, xr - axis), 0, None).astype(np.float32)
+    r = np.clip(np.minimum(axis - xl, xr - axis), 0, None).astype(np.float32)
+    if strokes is None or not strokes.any():
+        return ys, r
+    left, right = _wall_positions(strokes, ys, axis)
+    wall = (right - left) / 2  # half the wall-to-wall width: robust to a slightly-off axis
+    ok = ~np.isnan(wall)
+    if ok.sum() < 0.4 * len(ys):  # mostly solid drawing: no usable walls
+        return ys, r
+    idx = np.arange(len(ys))
+    wall = np.interp(idx, idx[ok], wall[ok]).astype(np.float32)
+    from scipy.ndimage import median_filter
+    wall = median_filter(wall, size=max(3, (len(ys) // 25) | 1), mode="nearest")
+    return ys, np.minimum(r, wall)
 
 
-def _symmetric_part(mask: np.ndarray, axis: float) -> tuple[np.ndarray, np.ndarray]:
+def _symmetric_part(mask: np.ndarray, axis: float,
+                    strokes: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
     """(mirror-symmetric body about `axis`, leftover parts) for a silhouette."""
     body = np.zeros_like(mask)
-    ys, radii = _body_radius(mask, axis)
+    ys, radii = _body_radius(mask, axis, strokes)
     for y, rr in zip(ys, radii):
         if rr > 0:
             body[y, int(np.floor(axis - rr)):int(np.ceil(axis + rr)) + 1] = True
@@ -453,7 +534,8 @@ def build(mask: np.ndarray, out_dir: Path, mode: str = "auto", text: str = "",
     named: list[tuple[str, trimesh.Trimesh]] = []
     if mode == "revolve":
         hollow = mods.get("hollow", bool(object_words(text) & CONTAINER_WORDS))
-        body, residual, info = revolve(mask, hollow, mods=mods)
+        body, residual, info = revolve(mask, hollow, mods=mods,
+                                       strokes=strokes if known_parts is None else None)
         named += _split_body(body, info, set(look["parts"]))
         # attached parts (handles): long and substantial; wobble slivers and stroke hooks are not
         handle = mods.get("handle", 1.0)
@@ -469,10 +551,14 @@ def build(mask: np.ndarray, out_dir: Path, mode: str = "auto", text: str = "",
         else:
             n, lab, st, _ = (cv2.connectedComponentsWithStats(residual.astype(np.uint8)) if handle
                              else (1, None, None, None))
-            main = 1 + int(np.argmax(st[1:, cv2.CC_STAT_AREA])) if n > 1 else 0
-            for i in range(1, n):  # largest attached part is the handle, others are spouts
-                named.append(("handle" if i == main else "spout",
-                              inflate(_tube_mask(lab == i, strokes, body.extents[0] * handle),
+            # Attached parts are handles (a trophy has two). Only spouted vessels get a spout:
+            # there the smallest attached part is the spout.
+            spouted = bool(object_words(text) & SPOUT_WORDS) or "spout" in text.lower()
+            spout_i = 1 + int(np.argmin(st[1:, cv2.CC_STAT_AREA])) if (spouted and n > 2) else -1
+            for i in range(1, n):
+                named.append(("spout" if i == spout_i else "handle",
+                              inflate(_tube_mask(lab == i, info.get("strokes", strokes),
+                                                 body.extents[0] * handle),
                                       depth=0.9, res=200, min_thick=2.0)))
         logs.append(f"revolved body (hollow={hollow}, sections={mods.get('sections', 96)}) + "
                     f"{n - 1} attached part(s)")

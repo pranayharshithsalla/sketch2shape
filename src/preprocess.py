@@ -71,16 +71,18 @@ def _fill_outline(binary_strokes: np.ndarray) -> np.ndarray:
     contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     filled = np.zeros_like(binary_strokes)
     side = binary_strokes.shape[0]
-    for c in contours:
-        x, y, w, h = cv2.boundingRect(c)
+    boxes = [cv2.boundingRect(c) for c in contours]
+    main = max((w * h for _, _, w, h in boxes), default=0)
+    for c, (x, y, w, h) in zip(contours, boxes):
         if max(w, h) < 0.04 * side:  # specks
             continue
         part = np.zeros_like(binary_strokes)
         cv2.drawContours(part, [c], -1, 255, thickness=-1)
         stroke_area = cv2.countNonZero(cv2.bitwise_and(part, closed))
-        # An open stroke (arc cap, lid, spout, single curve) encloses almost nothing:
-        # fill its convex hull instead of discarding it
-        if cv2.countNonZero(part) < 2.5 * max(stroke_area, 1):
+        # A small DETACHED open stroke (an arc cap drawn above a bottle) encloses almost
+        # nothing: fill its convex hull instead of losing it. Never do this to the main
+        # drawing: thick, detailed sketches (a trophy with handles) would become a blob.
+        if w * h < 0.3 * main and cv2.countNonZero(part) < 2.5 * max(stroke_area, 1):
             cv2.drawContours(part, [cv2.convexHull(c)], -1, 255, thickness=-1)
         filled |= part
     if not filled.any() and contours:

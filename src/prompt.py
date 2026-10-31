@@ -147,7 +147,8 @@ def parse(text: str, preset: str = "auto") -> dict:
     res_parts = {p: resolve(d.get("rgb") or (None if d.get("mat") else body[0]), d.get("mat") or body_mat)
                  for p, d in parts.items()}
     bits = [f"body {_name(body)}"] + [f"{p} {_name(v)}" for p, v in res_parts.items()]
-    return {"body": body, "parts": res_parts, "summary": "; ".join(bits)}
+    return {"body": body, "parts": res_parts, "summary": "; ".join(bits),
+            "body_explicit": body_rgb is not None or body_mat is not None}
 
 
 def _name(v) -> str:

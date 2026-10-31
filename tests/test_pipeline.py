@@ -84,3 +84,21 @@ def test_ai_plan_builds_multimaterial_glb(tmp_path):
     rep = finalize(raw, tmp_path)["report"]
     assert rep["parts"] == 6 and rep["watertight"] and rep["faces"] > 100
     assert "CHANGE REQUEST: add a drawer" in _request_text("add a drawer", spec, [("a table", "done")])
+
+
+def test_ai_cad_helpers_offline(tmp_path):
+    """Hollow lathe walls from the model keep their order; explicit body colour wins; organic routing."""
+    from src.ai_assembly import build_plan
+    from src.pipeline import is_organic
+    spec = {"object": "mug", "parts": [
+        {"name": "mug body", "role": "body", "shape": "lathe", "color": "#123456", "position": [0, 0, 0],
+         "profile": [[0, 0], [4, 0], [4.5, 10], [4.0, 10], [3.6, 0.6], [0, 0.6]]},  # outer up, inner down
+        {"name": "handle", "role": "handle", "shape": "tube", "size": [0.5], "color": "#000000",
+         "points": [[4.3, 8, 0], [7, 7, 0], [7, 3, 0], [4.2, 2, 0]]}]}
+    raw, _ = build_plan(spec, tmp_path, "a violet mug with a black handle")
+    rep = finalize(raw, tmp_path)["report"]
+    assert rep["parts"] == 2 and rep["watertight"]
+    s = trimesh.load(raw, force="scene")
+    body = next(g for k, g in s.geometry.items() if "body" in k)
+    assert tuple(body.visual.material.baseColorFactor[:3]) != (0x12, 0x34, 0x56)  # violet, not the model's
+    assert is_organic("a brown teddy bear") and not is_organic("a gold trophy")

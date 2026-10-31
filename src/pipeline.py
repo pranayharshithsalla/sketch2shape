@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from . import config
+from . import ai_assembly, config
 from .export import finalize
 from .fidelity import best_of
 from .image2mesh import image_to_mesh
@@ -51,6 +51,7 @@ class Result:
     logs: list = field(default_factory=list)
     images: dict = field(default_factory=dict)   # name -> path, for the UI
     candidates: list = field(default_factory=list)
+    plan: dict | None = None  # AI-CAD part plan (lets the chat refine a sketch result)
 
 
 def _save(arr: np.ndarray, path: Path) -> str:
@@ -108,6 +109,28 @@ def run(sketch_input, prompt: str = "", material: str = "auto", n_candidates: in
     res.prompt = build_prompt(prompt, res.caption or "an object", material)
     res.logs.append(f"  prompt: {res.prompt[:140]}…")
     done("Caption", t)
+
+    # AI-CAD branch: a vision LLM reads the sketch (+ prompt), identifies its parts and
+    # proportions, and rebuilds it as clean, symmetric, multi-material CAD geometry.
+    want_ai = mesh_provider == "ai_cad" or (
+        mesh_provider == "auto" and not template and not is_organic(f"{prompt} {res.caption}"))
+    if want_ai and ai_assembly.available():
+        t = stage("AI-CAD: AI reads the sketch and rebuilds it", 0.3)
+        try:
+            ok, png = cv2.imencode(".png", sk.clean)
+            spec, model = ai_assembly.plan(prompt.strip(), sketch_png=png.tobytes())
+            raw, part_logs = ai_assembly.build_plan(spec, run_dir, prompt)
+            res.mesh_provider, res.image_provider = "ai_cad", f"none (sketch read by {model})"
+            res.plan = spec
+            res.logs.append(f"  AI-CAD ({model}): {spec.get('object', 'object')}, {len(spec['parts'])} parts")
+            res.logs += ["    " + l for l in part_logs]
+            res.scores, res.best = [_front_fidelity(raw, sk)], 0
+            res.images["chosen"] = res.images["sketch_mask"]
+            done("AI-CAD", t)
+            return _finish(res, raw, run_dir, material, t_all, stage, done, progress)
+        except Exception as e:  # never fail the run: fall back to the local engines
+            res.logs.append(f"  AI-CAD unavailable ({str(e)[:160]}); using local engines")
+            done("AI-CAD", t)
 
     # Sketch-CAD branch: lathe / flat objects (or an explicitly chosen CAD mode) are built
     # straight from the silhouette: exact fidelity, instant, no network or quota.
@@ -175,6 +198,33 @@ def run(sketch_input, prompt: str = "", material: str = "auto", n_candidates: in
     done("Image-to-3D", t)
 
     return _finish(res, raw, run_dir, material, t_all, stage, done, progress)
+
+
+ORGANIC_WORDS = {"teddy", "bear", "dog", "cat", "bird", "fish", "horse", "cow", "pig", "rabbit", "duck",
+                 "dragon", "dinosaur", "animal", "person", "man", "woman", "girl", "boy", "face",
+                 "head", "character", "monster", "doll", "tree", "plant", "flower", "leaf", "fruit",
+                 "apple", "banana", "mushroom", "elephant", "lion", "tiger", "giraffe", "penguin",
+                 "turtle", "snake", "shark", "whale", "octopus", "frog", "owl", "butterfly"}
+
+
+def is_organic(text: str) -> bool:
+    """Organic subjects suit learned image-to-3D (TripoSR) better than part-based CAD."""
+    import re
+    return bool(set(re.findall(r"[a-z]+", (text or "").lower())) & ORGANIC_WORDS)
+
+
+def _front_fidelity(glb: str, sk: Sketch) -> dict:
+    """Honest fidelity for AI-CAD: render the model's front silhouette and score it against
+    the sketch with the same metric used for 2D candidates."""
+    try:
+        from .fidelity import fidelity
+        from .render import _load, render_view
+        img = np.asarray(render_view(_load(glb), 0, 256, pitch_deg=0)).astype(np.int16)
+        fg = (np.abs(img - np.array([245, 245, 248])).sum(-1) > 12).astype(np.uint8) * 255
+        rgba = np.dstack([img.astype(np.uint8), fg])
+        return fidelity(sk.mask, sk.scribble, rgba)
+    except Exception:
+        return {"score": 0.0, "iou": 0.0, "edge": 0.0}
 
 
 def _finish(res: Result, raw: str, run_dir: Path, material: str, t_all: float, stage, done, progress) -> Result:

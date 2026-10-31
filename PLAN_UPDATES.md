@@ -54,3 +54,10 @@ The original plan's strategy still holds: a reliable pipeline, best-of-N with a 
 - **Model routing:** a new design uses `gemini-3.5-flash` (richer structure, ~10 s); edits use `gemini-flash-lite-latest` (~2-3 s). Busy models are skipped via the cooldown, and an offline first request falls back to the templates.
 - **Verified:** chair → thinner legs + red seat → add armrests → undo → bar-stool height, each edit applied precisely. Car → yellow spoiler + bigger wheels. Car → "make it blue" kept all 23 parts.
 - **Not done:** the local SD-Turbo text-to-image route (`src/text2image_local.py`) is written but untested (the first load ran out of RAM). Organic objects are approximated from primitives.
+
+# Update 6 (31 Oct 2026, ~H7): AI-CAD, and robust sketch reading
+
+- **SD-Turbo local generative step: tried and reverted.** CPU quality and speed were not good enough (bfloat16 is emulated on this CPU, fp32 needs ~6 GB). The work is kept in a git stash.
+- **Sketch reading fixes:** thick, detailed drawings are no longer collapsed into a convex blob (the hull rule now only applies to small detached arcs). Body width comes from the drawn walls (steep lines only), so handles on both sides stay handles. Leaning hand drawings are straightened row by row before revolving. Two handles are both handles; "spout" only for teapots, kettles and jugs.
+- **AI-CAD (new default with a Gemini key):** the vision LLM reads the sketch plus prompt and returns a part plan with measured proportions, idealised: symmetric, smooth, consistent. It is built as multi-material CAD. Hollow lathe walls are kept in order, handles are smooth Catmull-Rom swept tubes, and the user's explicit colours override the model's. A front-silhouette fidelity score is reported. Organic subjects go to TripoSR. Without a key, or on failure, it falls back to the local engines.
+- **Refine in chat:** an AI-CAD result can be handed to the AI Designer and edited in conversation (verified: bottle → "thicker handle, silver cap").

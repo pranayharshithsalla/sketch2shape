@@ -78,12 +78,30 @@ def available() -> bool:
     return bool(config.GEMINI_API_KEY)
 
 
-def _ask(model: str, prompt: str) -> dict:
+SKETCH_BRIEF = """The attached image is the user's hand-drawn SKETCH of the object (front view).
+Read it carefully: identify every part (body, cup, lid, neck, cap, stem, base, handles, spouts,
+legs, wheels, ...), count them, and measure their relative heights, widths and positions from
+the drawing (the drawing's full height = the object's height). Keep the sketch's design and
+proportions, but IDEALISE it into a clean, well-made product: perfectly symmetric (mirror paired
+parts such as two handles exactly), smooth curves, straight lines where intended, consistent
+thickness, parts properly attached. Ignore stray marks, shading and paper texture.
+Round vessels/cups/bases/stems should be lathe parts with smooth profiles. Handles are tubes
+(points along the handle's centre line, attached to the body at both ends)."""
+
+
+def _ask(model: str, prompt: str, image_png: bytes | None = None) -> dict:
+    parts = [{"text": prompt}]
+    if image_png is not None:
+        import base64
+        parts = [{"text": SKETCH_BRIEF},
+                 {"inline_data": {"mime_type": "image/png", "data": base64.b64encode(image_png).decode()}},
+                 {"text": f"User's description: {prompt or '(none: infer it from the sketch)'}"}]
     body = {"systemInstruction": {"parts": [{"text": SYSTEM}]},
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.4, "responseMimeType": "application/json"}}
+            "contents": [{"parts": parts}],
+            "generationConfig": {"temperature": 0.3, "responseMimeType": "application/json"}}
     r = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-                      headers={"x-goog-api-key": config.GEMINI_API_KEY}, json=body, timeout=30)
+                      headers={"x-goog-api-key": config.GEMINI_API_KEY}, json=body,
+                      timeout=45 if image_png is not None else 30)
     if r.status_code != 200:
         raise ProviderError(f"planner HTTP {r.status_code}: {r.text[:200]}")
     text = r.json()["candidates"][0]["content"]["parts"][0]["text"]
@@ -101,15 +119,18 @@ def _request_text(prompt: str, current: dict | None, history: list[tuple[str, st
 
 
 def plan(prompt: str, current: dict | None = None,
-         history: list[tuple[str, str]] | None = None) -> tuple[dict, str]:
-    """-> (plan dict, model used). With `current`, the request edits that plan."""
+         history: list[tuple[str, str]] | None = None,
+         sketch_png: bytes | None = None) -> tuple[dict, str]:
+    """-> (plan dict, model used). With `current`, the request edits that plan. With
+    `sketch_png`, the model reads the sketch and rebuilds it as an idealised part plan."""
     text = _request_text(prompt, current, history)
     errs = []
     # a new design is worth the stronger model (richer structure); edits use the fast one first
     order = PLANNER_MODELS if current else sorted(PLANNER_MODELS, key=lambda m: m != STRONG_MODEL)
     for m in order:
         try:
-            spec = with_retries(_ask, m, text, name=f"planner:{m}", retries=0)
+            spec = with_retries(_ask, m, text, sketch_png if not current else None,
+                                name=f"planner:{m}", retries=0)
             if not isinstance(spec, dict) or not spec.get("parts"):
                 raise ProviderError("plan has no parts")
             return spec, m
@@ -164,18 +185,38 @@ def _primitive(p: dict) -> trimesh.Trimesh | None:
         return _y_up(trimesh.creation.torus(major_radius=R, minor_radius=min(r, R * 0.9),
                                             major_sections=48, minor_sections=16))
     if shape == "lathe":
-        prof = [(max(_num(a, 0), 0), _num(b, 0)) for a, b in (p.get("profile") or []) if True][:40]
+        prof = [(max(_num(q[0], 0), 0), _num(q[1], 0)) for q in (p.get("profile") or [])
+                if isinstance(q, (list, tuple)) and len(q) >= 2][:60]
         if len(prof) < 2:
             return None
-        prof = sorted(prof, key=lambda t: t[1])
-        pts = [(0.0, prof[0][1])] + prof + [(0.0, prof[-1][1])]
+        ys = [y for _, y in prof]
+        if all(b >= a for a, b in zip(ys, ys[1:])) or all(b <= a for a, b in zip(ys, ys[1:])):
+            prof = sorted(prof, key=lambda t: t[1])  # simple outline: bottom to top
+        # else: keep the given order; it is a closed wall section (outer up, inner down), as
+        # models write hollow cups and mugs, and re-sorting it by height would scramble it
+        pts = prof
+        if pts[0][0] > 0:
+            pts = [(0.0, pts[0][1])] + pts
+        if pts[-1][0] > 0:
+            pts = pts + [(0.0, pts[-1][1])]
         m = trimesh.creation.revolve(np.array(pts), sections=64)
+        m.fix_normals()
         return _y_up(m)
     if shape == "tube":
         pts = [_vec(q, 3, [0, 0, 0]) for q in (p.get("points") or [])]
         r = s[0]
         if len(pts) < 2:
             return None
+        try:  # smooth swept tube along a Catmull-Rom spline through the model's points
+            from shapely.geometry import Point
+            path = _catmull_rom(np.array(pts, float), samples=12)
+            ring = Point(0, 0).buffer(r, quad_segs=8)
+            tube = trimesh.creation.sweep_polygon(ring, path)
+            caps = [trimesh.creation.icosphere(subdivisions=2, radius=r).apply_translation(path[k])
+                    for k in (0, -1)]
+            return trimesh.util.concatenate([tube] + caps)
+        except Exception as e:
+            log.debug("sweep failed (%s); using cylinder segments", e)
         segs = []
         for a, b in zip(pts[:-1], pts[1:]):
             a, b = np.array(a), np.array(b)
@@ -186,6 +227,23 @@ def _primitive(p: dict) -> trimesh.Trimesh | None:
         segs.append(trimesh.creation.icosphere(subdivisions=2, radius=r).apply_translation(pts[0]))
         return trimesh.util.concatenate(segs) if segs else None
     return trimesh.creation.box(extents=(s + [s[-1]] * 3)[:3])  # unknown shape: a box
+
+
+def _catmull_rom(p: np.ndarray, samples: int = 12) -> np.ndarray:
+    """Smooth curve through all points (centripetal-free uniform Catmull-Rom)."""
+    if len(p) < 3:
+        t = np.linspace(0, 1, samples * 2)[:, None]
+        return p[0] * (1 - t) + p[-1] * t
+    q = np.vstack([2 * p[0] - p[1], p, 2 * p[-1] - p[-2]])
+    out = []
+    for i in range(1, len(q) - 2):
+        p0, p1, p2, p3 = q[i - 1], q[i], q[i + 1], q[i + 2]
+        for t in np.linspace(0, 1, samples, endpoint=False):
+            t2, t3 = t * t, t * t * t
+            out.append(0.5 * (2 * p1 + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2
+                              + (-p0 + 3 * p1 - 3 * p2 + p3) * t3))
+    out.append(p[-1])
+    return np.array(out)
 
 
 def _hex(c, default=(150, 150, 150)):
@@ -222,6 +280,8 @@ def build_plan(spec: dict, out_dir: Path, prompt: str = "") -> tuple[str, list[s
         part_key = {"lid": "cap", "holder": "handle", "grip": "handle"}.get(role, role)
         if part_key in look["parts"]:
             rgb, metal, rough = look["parts"][part_key]
+        elif look.get("body_explicit") and (part_key == "body" or "body" in str(p.get("name", "")).lower()):
+            rgb, metal, rough = look["body"]  # the user's colour/material beats the model's guess
         apply_material(m, rgb, metal, rough)
         scene.add_geometry(m, geom_name=f"{i:02d}_{re.sub(r'[^a-z0-9]+', '_', str(p.get('name', role)).lower())}")
         n_ok += 1
