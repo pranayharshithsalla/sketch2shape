@@ -1,0 +1,59 @@
+{
+  "prompt": "a red car. Single object, product render, full object in frame, centered, same viewpoint, pose and proportions as the sketch, soft studio lighting, plain pure white background, high detail, realistic materials and colours",
+  "caption": "",
+  "material": "auto",
+  "image_provider": "local",
+  "mesh_provider": "triposr_local",
+  "scores": [
+    {
+      "score": 0.969,
+      "iou": 0.996,
+      "edge": 0.928
+    }
+  ],
+  "best": 0,
+  "timings": {
+    "Preprocess": 0.09,
+    "Caption": 0.0,
+    "Sketch-to-image": 0.06,
+    "Background removal": 4.97,
+    "Fidelity": 0.07,
+    "Image-to-3D": 43.78,
+    "Export": 0.55,
+    "total": 49.52
+  },
+  "report": {
+    "vertices": 16218,
+    "faces": 32432,
+    "extents": [
+      1.0,
+      0.414,
+      0.264
+    ],
+    "watertight": true,
+    "parts": 1,
+    "colour": "vertex colours",
+    "glb_reopens": true,
+    "glb_size_kb": 634.5
+  },
+  "logs": [
+    "▶ Preprocess",
+    "  ✓ Preprocess (0.09s)",
+    "▶ Caption",
+    "  prompt: a red car. Single object, product render, full object in frame, centered, same viewpoint, pose and proportions as the sketch, soft studio li…",
+    "  ✓ Caption (0.0s)",
+    "▶ Generate 1 candidate image(s)",
+    "  image provider 'local' produced 1/1 candidates",
+    "  ✓ Sketch-to-image (0.06s)",
+    "▶ Remove background",
+    "  ✓ Background removal (4.97s)",
+    "▶ Score fidelity",
+    "  scores: [0.969] -> best #0",
+    "  ✓ Fidelity (0.07s)",
+    "▶ Reconstruct 3D (this is the slow step)",
+    "  mesh provider 'triposr_local' ok in 40.8s",
+    "  ✓ Image-to-3D (43.78s)",
+    "▶ Repair, validate, export",
+    "  ✓ Export (0.55s)"
+  ]
+}

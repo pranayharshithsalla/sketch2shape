@@ -1,0 +1,63 @@
+{
+  "prompt": "a wooden chair. Single object, product render, full object in frame, centered, same viewpoint, pose and proportions as the sketch, soft studio lighting, plain pure white background, high detail, realistic materials and colours",
+  "caption": "",
+  "material": "auto",
+  "image_provider": "kontext_space",
+  "mesh_provider": "local",
+  "scores": [
+    {
+      "score": 0.328,
+      "iou": 0.362,
+      "edge": 0.278
+    }
+  ],
+  "best": 0,
+  "timings": {
+    "Preprocess": 0.1,
+    "Caption": 0.0,
+    "Sketch-to-image": 33.61,
+    "Background removal": 3.53,
+    "Fidelity": 0.07,
+    "Image-to-3D": 38.88,
+    "Export": 0.76,
+    "total": 76.93
+  },
+  "report": {
+    "vertices": 23234,
+    "faces": 46468,
+    "extents": [
+      0.772,
+      1.0,
+      0.189
+    ],
+    "watertight": true,
+    "components": 1,
+    "colour": "vertex colours",
+    "glb_reopens": true,
+    "glb_size_kb": 908.6
+  },
+  "logs": [
+    "▶ Preprocess",
+    "  ✓ Preprocess (0.1s)",
+    "▶ Caption",
+    "  prompt: a wooden chair. Single object, product render, full object in frame, centered, same viewpoint, pose and proportions as the sketch, soft stud…",
+    "  ✓ Caption (0.0s)",
+    "▶ Generate 1 candidate image(s)",
+    "  image provider 'gemini' failed: image:gemini: ProviderError: gemini HTTP 429: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"You exceeded your current quota, please check your plan and billin",
+    "  image provider 'kontext_space' produced 1/1 candidates",
+    "  ✓ Sketch-to-image (33.61s)",
+    "▶ Remove background",
+    "  ✓ Background removal (3.53s)",
+    "▶ Score fidelity",
+    "  scores: [0.328] -> best #0",
+    "  ✓ Fidelity (0.07s)",
+    "▶ Reconstruct 3D (this is the slow step)",
+    "  mesh provider 'trellis' failed after 18.9s: mesh:trellis: AppError: You have exceeded your free ZeroGPU quota (120s requested vs. 159s left). Try again in 23:53:52. Subscribe to Hugging Face PRO to get 25 min of ZeroGPU quota a day - https://hu",
+    "  mesh provider 'sf3d' failed after 18.8s: mesh:sf3d: AppError: The upstream Gradio app has raised an exception but has not enabled verbose error reporting. To enable, set show_error=True in launch().",
+    "  mesh provider 'replicate_trellis' failed after 1.0s: mesh:replicate_trellis: ReplicateError: ReplicateError Details:\ntitle: Unauthenticated\nstatus: 401\ndetail: You did not pass a valid authentication token",
+    "  mesh provider 'local' ok in 0.2s",
+    "  ✓ Image-to-3D (38.88s)",
+    "▶ Repair, validate, export",
+    "  ✓ Export (0.76s)"
+  ]
+}

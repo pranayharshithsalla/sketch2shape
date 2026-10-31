@@ -1,0 +1,49 @@
+{
+  "prompt": "a red ceramic mug with a black handle. Single object, product render, full object in frame, centered, same viewpoint, pose and proportions as the sketch, soft studio lighting, plain pure white background, high detail, realistic materials and colours",
+  "caption": "",
+  "material": "auto",
+  "image_provider": "none (geometry built directly from the sketch)",
+  "mesh_provider": "revolve",
+  "scores": [
+    {
+      "score": 1.0,
+      "iou": 1.0,
+      "edge": 1.0
+    }
+  ],
+  "best": 0,
+  "timings": {
+    "Preprocess": 0.06,
+    "Caption": 0.0,
+    "Sketch-CAD": 0.31,
+    "Export": 0.92,
+    "total": 1.39
+  },
+  "report": {
+    "vertices": 40756,
+    "faces": 81508,
+    "extents": [
+      0.908,
+      1.0,
+      0.662
+    ],
+    "watertight": true,
+    "parts": 2,
+    "colour": "material",
+    "glb_reopens": true,
+    "glb_size_kb": 1434.6
+  },
+  "logs": [
+    "▶ Preprocess",
+    "  ✓ Preprocess (0.06s)",
+    "▶ Caption",
+    "  prompt: a red ceramic mug with a black handle. Single object, product render, full object in frame, centered, same viewpoint, pose and proportions a…",
+    "  ✓ Caption (0.0s)",
+    "▶ Sketch-CAD: revolve",
+    "  revolved body (hollow=True, sections=96) + 1 attached part(s)",
+    "  materials: body #c82d28 glossy; handle #232328 glossy",
+    "  ✓ Sketch-CAD (0.31s)",
+    "▶ Repair, validate, export",
+    "  ✓ Export (0.92s)"
+  ]
+}

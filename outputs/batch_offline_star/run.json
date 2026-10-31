@@ -1,0 +1,49 @@
+{
+  "prompt": "a gold star. Single object, product render, full object in frame, centered, same viewpoint, pose and proportions as the sketch, soft studio lighting, plain pure white background, high detail, realistic materials and colours",
+  "caption": "",
+  "material": "auto",
+  "image_provider": "none (geometry built directly from the sketch)",
+  "mesh_provider": "extrude",
+  "scores": [
+    {
+      "score": 1.0,
+      "iou": 1.0,
+      "edge": 1.0
+    }
+  ],
+  "best": 0,
+  "timings": {
+    "Preprocess": 0.07,
+    "Caption": 0.0,
+    "Sketch-CAD": 0.06,
+    "Export": 0.02,
+    "total": 0.15
+  },
+  "report": {
+    "vertices": 104,
+    "faces": 204,
+    "extents": [
+      1.0,
+      0.954,
+      0.178
+    ],
+    "watertight": true,
+    "parts": 1,
+    "colour": "material",
+    "glb_reopens": true,
+    "glb_size_kb": 4.6
+  },
+  "logs": [
+    "▶ Preprocess",
+    "  ✓ Preprocess (0.07s)",
+    "▶ Caption",
+    "  prompt: a gold star. Single object, product render, full object in frame, centered, same viewpoint, pose and proportions as the sketch, soft studio …",
+    "  ✓ Caption (0.0s)",
+    "▶ Sketch-CAD: extrude",
+    "  extruded flat outline",
+    "  materials: body #deb446 metallic",
+    "  ✓ Sketch-CAD (0.06s)",
+    "▶ Repair, validate, export",
+    "  ✓ Export (0.02s)"
+  ]
+}

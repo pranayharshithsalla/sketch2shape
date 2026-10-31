@@ -1,0 +1,49 @@
+{
+  "prompt": "a coffee mug. Single object, product render, full object in frame, centered, same viewpoint, pose and proportions as the sketch, soft studio lighting, plain pure white background, high detail, realistic materials and colours",
+  "caption": "a coffee mug",
+  "material": "auto",
+  "image_provider": "none (geometry built directly from the sketch)",
+  "mesh_provider": "revolve",
+  "scores": [
+    {
+      "score": 1.0,
+      "iou": 1.0,
+      "edge": 1.0
+    }
+  ],
+  "best": 0,
+  "timings": {
+    "Preprocess": 0.07,
+    "Caption": 5.72,
+    "Sketch-CAD": 0.26,
+    "Export": 0.76,
+    "total": 6.93
+  },
+  "report": {
+    "vertices": 32656,
+    "faces": 65304,
+    "extents": [
+      0.894,
+      1.0,
+      0.66
+    ],
+    "watertight": true,
+    "parts": 2,
+    "colour": "material",
+    "glb_reopens": true,
+    "glb_size_kb": 1149.6
+  },
+  "logs": [
+    "▶ Preprocess",
+    "  ✓ Preprocess (0.07s)",
+    "▶ Caption",
+    "  prompt: a coffee mug. Single object, product render, full object in frame, centered, same viewpoint, pose and proportions as the sketch, soft studio…",
+    "  ✓ Caption (5.72s)",
+    "▶ Sketch-CAD: revolve",
+    "  revolved body (hollow=True, sections=96) + 1 attached part(s)",
+    "  materials: body #5f8cc8 satin",
+    "  ✓ Sketch-CAD (0.26s)",
+    "▶ Repair, validate, export",
+    "  ✓ Export (0.76s)"
+  ]
+}

@@ -1,0 +1,4 @@
+sketch,prompt,image,3d,fidelity,iou,candidates,verts,faces,watertight,colour,t_2d,t_3d,t_total,status
+chair.png,a wooden chair,kontext_space,local,0.328,0.362,1,23234,46468,True,vertex colours,33.61,38.88,76.93,ok
+car.png,a red car,kontext_space,local,0.824,0.826,1,23208,46412,True,vertex colours,31.93,40.05,74.16,ok
+teddy.png,a brown teddy bear,kontext_space,local,0.809,0.844,1,41840,83676,True,vertex colours,29.03,45.51,77.37,ok

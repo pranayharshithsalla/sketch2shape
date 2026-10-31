@@ -1,0 +1,59 @@
+{
+  "prompt": "a brown teddy bear. Single object, product render, full object in frame, centered, same viewpoint, pose and proportions as the sketch, soft studio lighting, plain pure white background, high detail, realistic materials and colours",
+  "caption": "",
+  "material": "auto",
+  "image_provider": "local",
+  "mesh_provider": "triposr_local",
+  "scores": [
+    {
+      "score": 0.982,
+      "iou": 0.995,
+      "edge": 0.963
+    }
+  ],
+  "best": 0,
+  "timings": {
+    "Preprocess": 0.07,
+    "Caption": 0.0,
+    "Sketch-to-image": 0.06,
+    "Background removal": 1.15,
+    "Fidelity": 0.1,
+    "Image-to-3D": 24.09,
+    "Export": 0.38,
+    "total": 25.85
+  },
+  "report": {
+    "vertices": 12244,
+    "faces": 24484,
+    "extents": [
+      0.699,
+      1.0,
+      0.089
+    ],
+    "watertight": true,
+    "parts": 1,
+    "colour": "vertex colours",
+    "glb_reopens": true,
+    "glb_size_kb": 479.2
+  },
+  "logs": [
+    "▶ Preprocess",
+    "  ✓ Preprocess (0.07s)",
+    "▶ Caption",
+    "  prompt: a brown teddy bear. Single object, product render, full object in frame, centered, same viewpoint, pose and proportions as the sketch, soft …",
+    "  ✓ Caption (0.0s)",
+    "▶ Generate 1 candidate image(s)",
+    "  image provider 'local' produced 1/1 candidates",
+    "  ✓ Sketch-to-image (0.06s)",
+    "▶ Remove background",
+    "  ✓ Background removal (1.15s)",
+    "▶ Score fidelity",
+    "  scores: [0.982] -> best #0",
+    "  ✓ Fidelity (0.1s)",
+    "▶ Reconstruct 3D (this is the slow step)",
+    "  mesh provider 'triposr_local' ok in 24.1s",
+    "  ✓ Image-to-3D (24.09s)",
+    "▶ Repair, validate, export",
+    "  ✓ Export (0.38s)"
+  ]
+}

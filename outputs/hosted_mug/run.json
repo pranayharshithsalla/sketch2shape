@@ -1,0 +1,65 @@
+{
+  "prompt": "an object. Single object, product render, full object in frame, centered, same viewpoint, pose and proportions as the sketch, soft studio lighting, plain pure white background, high detail, realistic materials and colours",
+  "caption": "an object",
+  "material": "auto",
+  "image_provider": "kontext_space",
+  "mesh_provider": "trellis",
+  "scores": [
+    {
+      "score": 0.666,
+      "iou": 0.768,
+      "edge": 0.514
+    },
+    {
+      "score": 0.661,
+      "iou": 0.738,
+      "edge": 0.546
+    }
+  ],
+  "best": 0,
+  "timings": {
+    "Preprocess": 0.09,
+    "Caption": 4.13,
+    "Sketch-to-image": 34.46,
+    "Background removal": 4.79,
+    "Fidelity": 0.13,
+    "Image-to-3D": 63.33,
+    "Export": 1.76,
+    "total": 108.69
+  },
+  "report": {
+    "vertices": 12437,
+    "faces": 22021,
+    "extents": [
+      1.0,
+      0.883,
+      0.742
+    ],
+    "watertight": false,
+    "components": 18,
+    "colour": "texture",
+    "glb_reopens": true,
+    "glb_size_kb": 1381.6
+  },
+  "logs": [
+    "▶ Preprocess",
+    "  ✓ Preprocess (0.09s)",
+    "▶ Caption",
+    "  prompt: an object. Single object, product render, full object in frame, centered, same viewpoint, pose and proportions as the sketch, soft studio li…",
+    "  ✓ Caption (4.13s)",
+    "▶ Generate 2 candidate image(s)",
+    "  image provider 'gemini' failed: image:gemini: ProviderError: gemini HTTP 429: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"You exceeded your current quota, please check your plan and billin",
+    "  image provider 'kontext_space' produced 2/2 candidates",
+    "  ✓ Sketch-to-image (34.46s)",
+    "▶ Remove background",
+    "  ✓ Background removal (4.79s)",
+    "▶ Score fidelity",
+    "  scores: [0.666, 0.661] -> best #0",
+    "  ✓ Fidelity (0.13s)",
+    "▶ Reconstruct 3D (this is the slow step)",
+    "  mesh provider 'trellis' ok in 63.3s",
+    "  ✓ Image-to-3D (63.33s)",
+    "▶ Repair, validate, export",
+    "  ✓ Export (1.76s)"
+  ]
+}

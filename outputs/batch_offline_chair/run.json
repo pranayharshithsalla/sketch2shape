@@ -1,0 +1,59 @@
+{
+  "prompt": "a wooden chair. Single object, product render, full object in frame, centered, same viewpoint, pose and proportions as the sketch, soft studio lighting, plain pure white background, high detail, realistic materials and colours",
+  "caption": "",
+  "material": "auto",
+  "image_provider": "local",
+  "mesh_provider": "triposr_local",
+  "scores": [
+    {
+      "score": 0.983,
+      "iou": 0.989,
+      "edge": 0.973
+    }
+  ],
+  "best": 0,
+  "timings": {
+    "Preprocess": 0.07,
+    "Caption": 0.0,
+    "Sketch-to-image": 0.06,
+    "Background removal": 1.33,
+    "Fidelity": 0.06,
+    "Image-to-3D": 26.12,
+    "Export": 0.85,
+    "total": 28.49
+  },
+  "report": {
+    "vertices": 26546,
+    "faces": 53088,
+    "extents": [
+      0.7,
+      1.0,
+      0.702
+    ],
+    "watertight": true,
+    "parts": 1,
+    "colour": "vertex colours",
+    "glb_reopens": true,
+    "glb_size_kb": 1037.9
+  },
+  "logs": [
+    "▶ Preprocess",
+    "  ✓ Preprocess (0.07s)",
+    "▶ Caption",
+    "  prompt: a wooden chair. Single object, product render, full object in frame, centered, same viewpoint, pose and proportions as the sketch, soft stud…",
+    "  ✓ Caption (0.0s)",
+    "▶ Generate 1 candidate image(s)",
+    "  image provider 'local' produced 1/1 candidates",
+    "  ✓ Sketch-to-image (0.06s)",
+    "▶ Remove background",
+    "  ✓ Background removal (1.33s)",
+    "▶ Score fidelity",
+    "  scores: [0.983] -> best #0",
+    "  ✓ Fidelity (0.06s)",
+    "▶ Reconstruct 3D (this is the slow step)",
+    "  mesh provider 'triposr_local' ok in 26.1s",
+    "  ✓ Image-to-3D (26.12s)",
+    "▶ Repair, validate, export",
+    "  ✓ Export (0.85s)"
+  ]
+}

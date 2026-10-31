@@ -1,0 +1,23 @@
+# Tested with Python 3.13 on Windows 11 (CPU only). Python 3.10-3.13 supported.
+gradio==6.31.0
+gradio_client==2.7.2
+huggingface_hub==2.4.0
+numpy==2.5.4
+onnxruntime==1.31.1
+opencv-python-headless==5.0.0.93
+pillow==12.3.0
+python-dotenv==1.2.4
+rembg==2.0.86
+replicate==1.0.7
+requests==2.34.2
+scikit-image==0.26.0
+scipy==1.18.1
+trimesh==5.2.0
+shapely==2.2.0
+mapbox_earcut==2.1.0
+# Local AI (TripoSR on CPU/GPU); run `python scripts/setup_local_models.py` once after install
+torch==2.15.0
+transformers==5.22.1
+omegaconf==2.4.0
+einops==0.8.2
+rtree==1.4.1
