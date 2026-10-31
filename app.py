@@ -9,7 +9,8 @@ import traceback
 import gradio as gr
 import numpy as np
 
-from src import config, image2mesh, sketch2image
+from src import config, designer, image2mesh, sketch2image
+from src.designer import Session
 from src.pipeline import StageError, run
 from src.prompt import MATERIALS
 from src.render import turntable_gif
@@ -121,6 +122,37 @@ def _unedited_template(draw, prompt) -> bool:
     return float(np.abs(c.astype(int) - t.astype(int)).mean()) < 6.0
 
 
+def _designer_view(session, history):
+    cur = session.current
+    if not cur:
+        return "", history, None, None, "", session
+    rep = cur["report"]
+    stats = (f"**Version {len(session.versions)}** · {rep['parts']} parts · {rep['faces']:,} faces · "
+             f"{'watertight' if rep['watertight'] else 'open'} · built in {cur['seconds']} s with `{cur['model']}`")
+    return "", history, cur["glb"], cur["files"], stats, session
+
+
+def designer_turn(message, history, session):
+    history = list(history or []) + [{"role": "user", "content": message}]
+    try:
+        session, reply = designer.turn(session, message)
+    except Exception as e:
+        traceback.print_exc()
+        reply = f"⚠️ I couldn't apply that ({str(e)[:200]}). Try rephrasing, or undo."
+    history.append({"role": "assistant", "content": reply})
+    return _designer_view(session, history)
+
+
+def designer_undo(history, session):
+    session, reply = designer.undo(session)
+    history = list(history or []) + [{"role": "assistant", "content": reply}]
+    return _designer_view(session, history)
+
+
+def designer_new():
+    return "", [], None, None, "", designer.Session()
+
+
 def make_gif(glb):
     """Runs after the model is shown, so the spin preview never delays the main result."""
     if not glb:
@@ -137,66 +169,101 @@ def build() -> gr.Blocks:
         gr.Markdown("# ✏️ → 🧊 Sketch2Shape\nDraw or upload a sketch, **or just type what you want**, "
                     "and get a textured, validated 3D asset (.glb / .obj / .stl).")
         gr.Markdown(_status_md())
-        with gr.Row():
-            with gr.Column(scale=5):
-                with gr.Tabs() as tabs:
-                    with gr.Tab("Draw", id="draw"):
-                        draw = gr.Sketchpad(
-                            label="Canvas (brush, eraser, clear via the toolbar)", type="numpy",
-                            canvas_size=(512, 512), height=520,
-                            brush=gr.Brush(colors=["#111111"], default_size=4, color_mode="fixed"))
-                    with gr.Tab("Upload", id="upload"):
-                        upload = gr.Image(label="Sketch image (PNG/JPG, photo of paper is fine)",
-                                          type="numpy", image_mode="RGBA", height=520)
-                prompt = gr.Textbox(
-                    label="Prompt (optional with a sketch; enough on its own for common objects)",
-                    placeholder="e.g. a brown bottle with a green holder  ·  a white teapot with a gold lid",
-                    info="Shape words refine your drawing: cylindrical · hexagonal / square / octagonal · "
-                         "domed / pointed top · ribbed · tall / short · wide / slim · thick / thin / no handle "
-                         "· solid / hollow · glossy / matte. Materials: gold, silver, copper, wood, ceramic, "
-                         "glass, plastic… Colours: any colour name or #hex. Per part: '... with a black handle / "
-                         "gold cap / silver rim / wooden lid'.")
+        with gr.Tabs():
+            with gr.Tab("✏️ Sketch → 3D", id="sketch"):
                 with gr.Row():
-                    draw_for_me = gr.Button("✏️ Draw it for me (from the prompt)", variant="secondary")
-                gr.Markdown("<small>**No sketch? Just type it.** Leave the canvas empty and the prompt builds the "
-                            "object. Works for: " + ", ".join(available_names()) + ".</small>")
-                if EXAMPLES:
-                    gr.Examples(EXAMPLES, inputs=[upload, prompt],
-                                label="Examples: click one, then Generate (opens in the Upload tab)")
-                material = gr.Dropdown(["auto"] + sorted(MATERIALS), value="auto", label="Material preset")
-                mesh_prov = gr.Dropdown(
-                    [("Auto (CAD for lathe/flat objects, else best available AI)", "auto"),
-                     ("Revolve: lathe objects (mug, vase, bottle, lamp)", "revolve"),
-                     ("Extrude: flat objects (sign, logo, gear, star)", "extrude"),
-                     ("Inflate: organic shapes (toys, animals)", "inflate"),
-                     ("TripoSR, local AI (unlimited, no internet)", "triposr_local"),
-                     ("TRELLIS, cloud AI (best quality, daily quota)", "trellis"),
-                     ("Offline fallback: inflate with image colours", "local")],
-                    value="auto", label="Geometry engine")
-                with gr.Accordion("Advanced", open=False):
-                    n_cands = gr.Slider(1, 4, value=config.NUM_CANDIDATES, step=1,
-                                        label="Best-of-N candidates (scored against your sketch)")
-                    img_prov = gr.Dropdown(["auto"] + list(sketch2image.PROVIDERS), value="auto",
-                                           label="Sketch-to-image provider")
-                    skip_2d = gr.Checkbox(False, label="Skip generative 2D step (use offline shaded sketch)")
-                    seed = gr.Number(42, precision=0, label="Seed")
-                btn = gr.Button("Generate 3D", variant="primary", size="lg")
-            with gr.Column(scale=6):
-                model = gr.Model3D(label="3D preview (drag to rotate, scroll to zoom)", height=480,
-                                   clear_color=(0.95, 0.95, 0.97, 1.0))
-                stats = gr.Markdown()
-                files = gr.File(label="Download (.glb, .obj+mtl zip, .stl)", file_count="multiple")
-        with gr.Row():
-            pre = gr.Gallery(label="1 · Preprocessing", columns=2, height=220)
-            cands = gr.Gallery(label="2 · Candidates ranked by Sketch Fidelity Score", columns=4, height=220)
-            spin = gr.Image(label="3 · 360° turntable (rendered after the model)", height=220, type="filepath")
-        log = gr.Textbox(label="Pipeline log", lines=10, max_lines=30)
-        glb_state = gr.State()
+                    with gr.Column(scale=5):
+                        with gr.Tabs() as tabs:
+                            with gr.Tab("Draw", id="draw"):
+                                draw = gr.Sketchpad(
+                                    label="Canvas (brush, eraser, clear via the toolbar)", type="numpy",
+                                    canvas_size=(512, 512), height=520,
+                                    brush=gr.Brush(colors=["#111111"], default_size=4, color_mode="fixed"))
+                            with gr.Tab("Upload", id="upload"):
+                                upload = gr.Image(label="Sketch image (PNG/JPG, photo of paper is fine)",
+                                                  type="numpy", image_mode="RGBA", height=520)
+                        prompt = gr.Textbox(
+                            label="Prompt (optional with a sketch; enough on its own for common objects)",
+                            placeholder="e.g. a brown bottle with a green holder  ·  a white teapot with a gold lid",
+                            info="Shape words refine your drawing: cylindrical · hexagonal / square / octagonal · "
+                                 "domed / pointed top · ribbed · tall / short · wide / slim · thick / thin / no handle "
+                                 "· solid / hollow · glossy / matte. Materials: gold, silver, copper, wood, ceramic, "
+                                 "glass, plastic… Colours: any colour name or #hex. Per part: '... with a black handle / "
+                                 "gold cap / silver rim / wooden lid'.")
+                        with gr.Row():
+                            draw_for_me = gr.Button("✏️ Draw it for me (from the prompt)", variant="secondary")
+                        gr.Markdown("<small>**No sketch? Just type it.** Leave the canvas empty and the prompt builds the "
+                                    "object. Works for: " + ", ".join(available_names()) + ".</small>")
+                        if EXAMPLES:
+                            gr.Examples(EXAMPLES, inputs=[upload, prompt],
+                                        label="Examples: click one, then Generate (opens in the Upload tab)")
+                        material = gr.Dropdown(["auto"] + sorted(MATERIALS), value="auto", label="Material preset")
+                        mesh_prov = gr.Dropdown(
+                            [("Auto (CAD for lathe/flat objects, else best available AI)", "auto"),
+                             ("Revolve: lathe objects (mug, vase, bottle, lamp)", "revolve"),
+                             ("Extrude: flat objects (sign, logo, gear, star)", "extrude"),
+                             ("Inflate: organic shapes (toys, animals)", "inflate"),
+                             ("TripoSR, local AI (unlimited, no internet)", "triposr_local"),
+                             ("TRELLIS, cloud AI (best quality, daily quota)", "trellis"),
+                             ("Offline fallback: inflate with image colours", "local")],
+                            value="auto", label="Geometry engine")
+                        with gr.Accordion("Advanced", open=False):
+                            n_cands = gr.Slider(1, 4, value=config.NUM_CANDIDATES, step=1,
+                                                label="Best-of-N candidates (scored against your sketch)")
+                            img_prov = gr.Dropdown(["auto"] + list(sketch2image.PROVIDERS), value="auto",
+                                                   label="Sketch-to-image provider")
+                            skip_2d = gr.Checkbox(False, label="Skip generative 2D step (use offline shaded sketch)")
+                            seed = gr.Number(42, precision=0, label="Seed")
+                        btn = gr.Button("Generate 3D", variant="primary", size="lg")
+                    with gr.Column(scale=6):
+                        model = gr.Model3D(label="3D preview (drag to rotate, scroll to zoom)", height=480,
+                                           clear_color=(0.95, 0.95, 0.97, 1.0))
+                        stats = gr.Markdown()
+                        files = gr.File(label="Download (.glb, .obj+mtl zip, .stl)", file_count="multiple")
+                with gr.Row():
+                    pre = gr.Gallery(label="1 · Preprocessing", columns=2, height=220)
+                    cands = gr.Gallery(label="2 · Candidates ranked by Sketch Fidelity Score", columns=4, height=220)
+                    spin = gr.Image(label="3 · 360° turntable (rendered after the model)", height=220, type="filepath")
+                log = gr.Textbox(label="Pipeline log", lines=10, max_lines=30)
+                glb_state = gr.State()
 
-        btn.click(generate, [draw, upload, prompt, material, n_cands, img_prov, mesh_prov, skip_2d, seed],
-                  [pre, cands, model, files, stats, log, glb_state, spin]
-                  ).then(make_gif, glb_state, spin)
-        draw_for_me.click(sketch_from_prompt, prompt, [draw, tabs])
+                btn.click(generate, [draw, upload, prompt, material, n_cands, img_prov, mesh_prov, skip_2d, seed],
+                          [pre, cands, model, files, stats, log, glb_state, spin]
+                          ).then(make_gif, glb_state, spin)
+                draw_for_me.click(sketch_from_prompt, prompt, [draw, tabs])
+
+            with gr.Tab("💬 AI Designer (chat)", id="designer"):
+                gr.Markdown("Describe **anything** and the AI plans it as parts and builds it in 3D. "
+                            "Not happy? Keep talking: *make the legs thinner*, *add armrests*, "
+                            "*paint the seat red*, *make it twice as tall*. Every turn is a new version "
+                            "you can undo.")
+                with gr.Row():
+                    with gr.Column(scale=5):
+                        chat = gr.Chatbot(label="Conversation", height=470)
+                        with gr.Row():
+                            chat_box = gr.Textbox(show_label=False, scale=5, autofocus=True,
+                                                  placeholder="e.g. a wooden chair with 4 legs and a backrest")
+                            send = gr.Button("Send", variant="primary", scale=1)
+                        with gr.Row():
+                            undo_btn = gr.Button("↩️ Undo last change")
+                            new_btn = gr.Button("🆕 New design")
+                        gr.Examples(["a wooden chair with 4 legs, no armrests and a backrest",
+                                     "a red sports car with black wheels", "a cute robot with a round head and antenna",
+                                     "a snowman with a carrot nose and black hat", "make the legs thinner",
+                                     "add armrests", "paint it navy blue", "make it twice as tall"],
+                                    inputs=chat_box, label="Try (first an object, then a change)")
+                    with gr.Column(scale=6):
+                        d_model = gr.Model3D(label="Current version (drag to rotate)", height=470,
+                                             clear_color=(0.95, 0.95, 0.97, 1.0))
+                        d_stats = gr.Markdown()
+                        d_files = gr.File(label="Download this version (.glb, .obj zip, .stl)",
+                                          file_count="multiple")
+                session = gr.State(Session())
+                d_out = [chat_box, chat, d_model, d_files, d_stats, session]
+                send.click(designer_turn, [chat_box, chat, session], d_out)
+                chat_box.submit(designer_turn, [chat_box, chat, session], d_out)
+                undo_btn.click(designer_undo, [chat, session], d_out)
+                new_btn.click(designer_new, None, d_out)
     return demo
 
 

@@ -14,6 +14,7 @@ This tool turns a rough sketch into a live 3D model that you can rotate and expl
 ### What makes it stand out
 | Feature | What it does |
 |---|---|
+| **💬 AI Designer (chat)** | Describe *anything* ("a wooden chair with 4 legs, no armrests and a backrest", "a red sports car", "a snowman with a carrot nose"). An LLM (Gemini) plans it as parts with sizes, positions, colours and materials, and the app builds a multi-material GLB in about 3–15 s. Then **keep talking**: "make the legs thinner", "add armrests", "paint the seat red", "make it twice as tall". Each turn edits the current plan, keeps everything else, and saves a numbered version with **Undo**. Offline, the first request falls back to the templates |
 | **Prompt-only creation** | No sketch needed for common objects: "a brown bottle with a green holder", "a white teapot with a gold lid and blue spout". 33 parametric templates (bottle, mug, cup, vase, wine glass, bowl, jar, lamp, teapot, kettle, jug, trophy, chess pawn, candle, star, heart, gear, shield, coin…) are built as exact geometry, so handles and spouts stay correct. **✏️ Draw it for me** puts the template on the canvas to edit first |
 | **Prompt refines the drawing** | The drawing sets the shape and words adjust it: `cylindrical`, `hexagonal`, `domed`, `pointed`, `ribbed`, `tall`, `slim`, `thick/thin/no handle`, `solid/hollow`, `glossy/matte` |
 | **Per-part materials** | "a red mug with a **black handle**", "a bottle with a **gold cap**", "a cup with a **gold rim**", "... **wooden lid**": separate PBR materials (body / cap / rim / base / handle) in one GLB |
@@ -58,7 +59,8 @@ python -m pytest -q tests
 **Key-free GPU path:** open [`colab/sketch2shape.ipynb`](colab/sketch2shape.ipynb) on a free Colab T4. It runs SD1.5 + ControlNet scribble + TripoSR locally on the GPU, with no tokens.
 
 ## 2. How to use the app
-0. **No sketch?** Just type a prompt such as `a brown bottle with a green holder` and press Generate, or press **✏️ Draw it for me** to get an editable starting sketch.
+0. **Want to just describe it?** Open the **💬 AI Designer** tab, type what you want, then refine it turn by turn in plain language (needs `GEMINI_API_KEY`; free tier).
+   **No sketch, no key?** Just type a prompt such as `a brown bottle with a green holder` and press Generate, or press **✏️ Draw it for me** to get an editable starting sketch.
 1. **Draw** on the canvas (brush / eraser / clear on the toolbar), **or** open **Upload** and drop a PNG/JPG. Photos of paper sketches work, since background normalisation is built in. Upload takes priority if both are given.
 2. Optionally type a prompt ("a red ceramic mug") and/or pick a **material preset**. Leave it blank and the sketch is **auto-captioned**. The object word in the prompt drives **Auto** engine selection (e.g. "vase" → revolve, "star" → extrude), or you can pick the **Geometry engine** yourself. In Sketch-CAD the drawing sets the shape and **prompt shape words refine it**: `cylindrical`, `hexagonal`/`square`/`octagonal`, `domed`/`pointed top`, `ribbed`, `tall`/`short`, `wide`/`slim`, `thick`/`thin`/`no handle`, `solid`/`hollow`, `glossy`/`matte`. The log line "prompt shape modifiers" shows which were applied.
 3. Click **Generate 3D**. You'll see the preprocessing steps, the candidate images ranked by fidelity, the 3D preview, mesh stats, per-stage timings, and download buttons.
@@ -93,6 +95,8 @@ sketch (canvas / upload)
 | `src/render.py` | OpenGL-free renderer: turntable PNG + 360° GIF (proof of real 3D) |
 | `src/sketch3d.py` | Sketch-CAD: revolve / extrude / inflate, prompt shape modifiers, per-part split |
 | `src/prompt.py` | Prompt understanding: CSS colours, shades, hex, materials, per-part colours |
+| `src/ai_assembly.py` | LLM part planner (Gemini) + primitive builder (box, cylinder, sphere, cone, capsule, torus, lathe, tube) |
+| `src/designer.py` | Conversational sessions: plan, edit, version, undo |
 | `src/templates.py` | Prompt-only creation: parametric template sketches with exact body / handle / spout geometry |
 | `src/caption_local.py` | Offline CLIP auto-caption for blank prompts |
 | `src/triposr_local.py` | TripoSR on local CPU/GPU (mcubes shim, transformers-5 weight remap) |

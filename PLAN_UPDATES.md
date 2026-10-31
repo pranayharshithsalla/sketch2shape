@@ -46,3 +46,11 @@ The original plan's strategy still holds: a reliable pipeline, best-of-N with a 
 - UI: **✏️ Draw it for me** puts the template on the canvas. If it is left unedited, the exact template path is used; if the user draws on it, the normal sketch path runs.
 - Fixed: glTF colours are now written in linear space, so viewers show true colours instead of washed-out ones.
 - Tests: 10 offline tests, including prompt-only creation and a clear error for unknown objects with no sketch.
+
+# Update 5 (31 Oct 2026, ~H6): conversational AI designer
+
+- **💬 AI Designer tab:** any prompt goes to an LLM part planner (Gemini, free tier). The plan is a JSON list of primitives with size, position, rotation, colour and material, and it is built as a multi-material GLB.
+- **Multi-turn:** follow-ups edit the current plan (current plan JSON + last 6 turns go to the model). Each turn saves `model_vN.glb`; **Undo** and **New design** are available.
+- **Model routing:** a new design uses `gemini-3.5-flash` (richer structure, ~10 s); edits use `gemini-flash-lite-latest` (~2-3 s). Busy models are skipped via the cooldown, and an offline first request falls back to the templates.
+- **Verified:** chair → thinner legs + red seat → add armrests → undo → bar-stool height, each edit applied precisely. Car → yellow spoiler + bigger wheels. Car → "make it blue" kept all 23 parts.
+- **Not done:** the local SD-Turbo text-to-image route (`src/text2image_local.py`) is written but untested (the first load ran out of RAM). Organic objects are approximated from primitives.

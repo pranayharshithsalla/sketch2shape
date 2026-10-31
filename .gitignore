@@ -23,3 +23,4 @@ outputs/*/*.stl
 outputs/*.glb
 outputs/ai_*/
 outputs/t2i_*.png
+outputs/pytest_*/

@@ -66,3 +66,21 @@ def test_no_sketch_and_unknown_object_is_a_clear_error():
     from src.pipeline import StageError, run
     with pytest.raises(StageError, match="Or type a prompt naming one of"):
         run(None, "a purple dragon", run_name="pytest_unknown")
+
+
+def test_ai_plan_builds_multimaterial_glb(tmp_path):
+    """Offline: a hand-written planner output (what the LLM returns) builds into a valid GLB."""
+    from src.ai_assembly import _request_text, build_plan
+    spec = {"object": "table", "parts": [
+        {"name": "top", "role": "body", "shape": "box", "size": [100, 4, 60], "position": [0, 72, 0],
+         "color": "#8b5a2b", "material": "wood"},
+        *[{"name": f"leg {i}", "role": "leg", "shape": "cylinder", "size": [3, 70], "color": "#222222",
+           "material": "metal", "position": [x, 35, z]} for i, (x, z) in
+          enumerate([(-45, -25), (45, -25), (-45, 25), (45, 25)])],
+        {"name": "vase", "role": "detail", "shape": "lathe", "position": [0, 74, 0], "color": "#2d5fcd",
+         "profile": [[4, 0], [7, 8], [3, 18], [4, 22]]},
+    ]}
+    raw, logs = build_plan(spec, tmp_path, "a table")
+    rep = finalize(raw, tmp_path)["report"]
+    assert rep["parts"] == 6 and rep["watertight"] and rep["faces"] > 100
+    assert "CHANGE REQUEST: add a drawer" in _request_text("add a drawer", spec, [("a table", "done")])

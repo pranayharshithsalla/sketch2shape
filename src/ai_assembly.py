@@ -2,9 +2,8 @@
 (primitives with sizes, positions, rotations, colours, materials) and we build that plan
 as clean 3D geometry with one PBR material per part.
 
-"a wooden chair with 4 legs, no armrests and a backrest" -> seat box + 4 leg cylinders +
-backrest box, each placed and coloured by the model. The model also decides when the
-object is too organic for parts (an animal, a character) and asks for the image route.
+It is conversational: follow-up requests ("make the legs thinner", "add armrests",
+"paint the seat red") are applied to the current plan, keeping everything else.
 """
 from __future__ import annotations
 
@@ -26,7 +25,8 @@ log = logging.getLogger(__name__)
 
 # Fast model first, better model as fallback; both are on the free tier
 PLANNER_MODELS = [m.strip() for m in os.getenv(
-    "PLANNER_MODELS", "gemini-3.5-flash,gemini-flash-latest,gemini-flash-lite-latest").split(",") if m.strip()]
+    "PLANNER_MODELS", "gemini-flash-lite-latest,gemini-3.5-flash,gemini-flash-latest").split(",") if m.strip()]
+STRONG_MODEL = os.getenv("PLANNER_STRONG_MODEL", "gemini-3.5-flash")
 
 SYSTEM = """You are a 3D modelling planner. Turn the user's description into a JSON build plan
 made of simple parts. Think about the real object's structure, proportions and every detail
@@ -38,7 +38,7 @@ centred on x=0,z=0. Front faces +Z. Use realistic real-world sizes.
 Output ONLY JSON with this schema:
 {
   "object": "short name",
-  "approach": "parts" | "image",
+  "reply": "one friendly sentence telling the user what you built or changed",
   "parts": [
     {
       "name": "seat",                      // descriptive, e.g. "front left leg"
@@ -56,12 +56,15 @@ Output ONLY JSON with this schema:
   ]
 }
 Rules:
-- Use "approach":"image" (with empty parts) ONLY for organic shapes that cannot be built from
-  primitives (animals, people, characters, plants, sculptures, food).
+- Organic things (animals, people, plants, food) are approximated with spheres, capsules and
+  cones in a friendly toy-like style; never refuse.
 - Use lathe for round vessels (vases, bottles, cups, lamps): give 6-14 profile points.
 - Parts must touch/overlap so the object is connected; nothing floats unless the object floats.
 - Respect every explicit instruction (e.g. "4 legs", "no armrests", "green handle").
-- 3 to 40 parts. Pick colours that match the description (or sensible real colours)."""
+- 3 to 40 parts. Pick colours that match the description (or sensible real colours).
+- When given a CURRENT PLAN and a change request, return the COMPLETE updated plan: apply
+  exactly the requested change and keep every other part, size, position and colour as is.
+  If the request is a new, unrelated object, start a fresh plan."""
 
 MATERIAL_PBR = {  # (metallic, roughness)
     "metal": (0.95, 0.3), "gold": (1.0, 0.25), "silver": (1.0, 0.2), "chrome": (1.0, 0.08),
@@ -80,7 +83,7 @@ def _ask(model: str, prompt: str) -> dict:
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {"temperature": 0.4, "responseMimeType": "application/json"}}
     r = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-                      headers={"x-goog-api-key": config.GEMINI_API_KEY}, json=body, timeout=45)
+                      headers={"x-goog-api-key": config.GEMINI_API_KEY}, json=body, timeout=30)
     if r.status_code != 200:
         raise ProviderError(f"planner HTTP {r.status_code}: {r.text[:200]}")
     text = r.json()["candidates"][0]["content"]["parts"][0]["text"]
@@ -88,12 +91,28 @@ def _ask(model: str, prompt: str) -> dict:
     return json.loads(text)
 
 
-def plan(prompt: str) -> tuple[dict, str]:
-    """-> (plan dict, model used). Tries planner models in order."""
+def _request_text(prompt: str, current: dict | None, history: list[tuple[str, str]] | None) -> str:
+    if not current:
+        return prompt
+    convo = "\n".join(f"User: {u}\nYou: {a}" for u, a in (history or [])[-6:])
+    return (f"CURRENT PLAN:\n{json.dumps(current, separators=(',', ':'))}\n\n"
+            f"CONVERSATION SO FAR:\n{convo or '(none)'}\n\n"
+            f"CHANGE REQUEST: {prompt}\n\nReturn the complete updated plan as JSON.")
+
+
+def plan(prompt: str, current: dict | None = None,
+         history: list[tuple[str, str]] | None = None) -> tuple[dict, str]:
+    """-> (plan dict, model used). With `current`, the request edits that plan."""
+    text = _request_text(prompt, current, history)
     errs = []
-    for m in PLANNER_MODELS:
+    # a new design is worth the stronger model (richer structure); edits use the fast one first
+    order = PLANNER_MODELS if current else sorted(PLANNER_MODELS, key=lambda m: m != STRONG_MODEL)
+    for m in order:
         try:
-            return with_retries(_ask, m, prompt, name=f"planner:{m}", retries=0), m
+            spec = with_retries(_ask, m, text, name=f"planner:{m}", retries=0)
+            if not isinstance(spec, dict) or not spec.get("parts"):
+                raise ProviderError("plan has no parts")
+            return spec, m
         except Exception as e:
             errs.append(f"{m}: {str(e)[:120]}")
     raise ProviderError("AI planner unavailable: " + " | ".join(errs))
