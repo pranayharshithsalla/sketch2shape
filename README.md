@@ -1,4 +1,4 @@
-# Sketch2Shape AI: sketch, photo or words → a textured, printable 3D asset
+# Sketch2Shape AI: sketch, photo or words → a textured, exportable 3D prototype
 
 <p align="center"><img src="samples/bat/turntable.gif" width="260" alt="Cricket bat built from a sketch, BRAND NAME baked into the texture, turning 360°"></p>
 
@@ -77,7 +77,7 @@ docker compose --profile gpu up --build app-gpu            # NVIDIA GPU (NVIDIA 
 
 **Verify:**
 ```bash
-python -m pytest -q tests          # 27 unit tests: preprocessing, ranking, decals, versions, validation, export, API
+python -m pytest -q tests          # 44 tests (42 pass; 2 known IoU misses, see §8b): preprocessing, ranking, decals, versions, export, API, hard cases
 python scripts/smoke_test.py       # offline end to end: sketch → 4 ranked candidates → .glb → decal → reload
 ```
 
@@ -90,7 +90,7 @@ No API key is needed for anything above. Keys only add optional cloud engines (�
 2. Optionally type a prompt (never required with a sketch or photo) and choose **This input controls**: *Shape + style* / *Shape only* / *Style & colour only*.
 3. **Create 3D Shape**. The button becomes **Update 3D Shape**: every later input refines the same model as a new version.
    Alternatively, **🎲 Generate 4 candidates**: ranked cards appear. Click one, then **Build 3D from the selected candidate**, or tick **Auto**.
-4. Right panel: the 3D preview (drag, or use the ⟲ ⟳ ▲ ▼ ＋ － buttons), **Accuracy / Print ready / Parts / Build time**, **Download (.GLB)**, then:
+4. Right panel: the 3D preview (drag, or use the ⟲ ⟳ ▲ ▼ ＋ － buttons), **Accuracy / Print ready (basic check: every part watertight) / Parts / Build time**, **Download (.GLB)**, then:
    - **🕘 Version timeline**: select a version, then **↩ Revert** or **⟷ Compare** side by side.
    - **🔤 Text & logo**: text or logo, font, colour, side, position, size, rotation → **Bake onto model**. Tick **Live move** to drag it with the sliders.
    - **📱 AR & turntable**: QR for your phone; render a 360° GIF.
@@ -206,6 +206,8 @@ Sketch-CAD, AI-CAD geometry, ranking, decal baking, procedural textures and vali
 
 **Assumed hardware:** any 4-core CPU, **8 GB RAM minimum (16 GB recommended)**, ~6 GB disk for weights. **No GPU needed.** Optional NVIDIA GPU (≥8 GB VRAM) enables the SD 1.5 + ControlNet candidate path and fast TripoSR (~6–8 GB VRAM).
 **Measured on:** Intel Core Ultra 7 155H laptop, 16 GB RAM, Windows 11, Python 3.13, **CPU only**.
+**What "print ready" means here:** a basic printability check (every part is a closed, watertight mesh and the exported file re-opens). The models are **3D prototypes for visualisation, AR and further refinement**, not CAD-grade manufacturing parts; check wall thickness and overhangs in your slicer before printing.
+
 **Tested on (2026-11-01):** Windows 11 Home (build 26200), Python 3.13 in a fresh `.venv`, no GPU, with and without API keys; 42 of 44 tests pass (the two IoU misses are listed in §8b). A clean clone on a second machine had not been done at the time of writing.
 
 | Stage | Typical time (CPU) | Notes |
@@ -228,6 +230,8 @@ Sketch-CAD, AI-CAD geometry, ranking, decal baking, procedural textures and vali
 
 ## 8. Benchmark (cached samples)
 
+> Measured example results on the five cached sketches. They show how each engine behaves, not a guarantee for arbitrary input.
+
 `samples/` holds **cached results**, clearly labelled (`"cached": true` in each `result.json`). The live app regenerates all of this from fresh input. For each of five sketches (cricket bat, chair, mug, toy car, lamp) you get `input.png`, `candidates/` (4 ranked, `_best` marked), `model.glb` (default engine; the bat has **BRAND NAME** baked in), `model_from_best_candidate.glb` (TripoSR from the auto-picked candidate), `turntable.gif` and `result.json`. Regenerate with `python scripts/make_samples.py`.
 
 <!-- BENCHMARK -->
@@ -245,6 +249,8 @@ The default engine (AI-CAD) gives clean, symmetric, multi-material CAD at 56–6
 *Fidelity* is the silhouette+edge agreement (0.6 IoU + 0.4 edge) between the input sketch and the best-matching side render of the final model. *Auto-pick vs best-looking:* the offline candidate renderer (used here because cloud quotas were spent) produces near-identical candidates, so the auto-pick always matched our visual pick. With generative candidates (GPU/FLUX), ranking is what filters out cropped, multi-object or off-sketch images.
 
 ## 8b. Hard cases: holes, loops and thin structures
+
+> These are **measured results on our own example and synthetic sketches**, not proof that every unseen drawing will score as well. The fairest test is a fresh sketch drawn live (see [DEMO.md](DEMO.md)).
 
 `samples/hard_cases/` has eight drawings built to break naive pipelines: a genie lamp with a looped handle, a badminton racket (frame + string grid), a mug, a teapot with handle and spout, a chair with an open slatted back, a bicycle wheel with spokes, a wire basket and scissors with finger loops. Regenerate them with `python scripts/make_hard_cases.py`. All eight are **our own synthetic line drawings**; no genie-lamp image was supplied, so ours stands in, and you can drop a real image in with the same file name. Debug renders (front | side | top) and before/after silhouettes go to `outputs/debug/`.
 

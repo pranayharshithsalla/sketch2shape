@@ -1,5 +1,7 @@
 # Sketch2Shape: technical report
 
+> **Status note (2026-11-01):** this report records our **earlier experiments and design decisions**. Items listed below as future work have since been implemented: the post-3D silhouette check, structural accuracy (IoU, thin-part recall, holes), carve-and-add refinement and procedural strings. See README §8 and §8b for the current implementation and measured results.
+
 ## Objective
 Single-view 2D sketch (+ optional text) → textured, exportable 3D asset that keeps the sketch's structure.
 
@@ -59,4 +61,4 @@ Gemini image models returned 429 (free-tier image limit 0) and Replicate rejecte
 - The hidden geometry is hallucinated by the image-to-3D model, or for the offline path it is a symmetric inflation.
 - Free hosted endpoints have queues and quotas. Runtime varies between runs, and the router hides failures but cannot make them faster.
 - The offline reconstructor fills through-holes and concavities.
-- The fidelity score measures 2D agreement of the chosen image, not of the final 3D mesh. A post-3D silhouette check is future work.
+- The fidelity score measures 2D agreement of the chosen image, not of the final 3D mesh. A post-3D silhouette check was future work at the time; it is now implemented (README §8b).
