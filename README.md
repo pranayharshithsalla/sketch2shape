@@ -1,5 +1,18 @@
 # Sketch2Shape AI: sketch, photo or words → a textured, printable 3D asset
 
+<p align="center"><img src="samples/bat/turntable.gif" width="260" alt="Cricket bat built from a sketch, BRAND NAME baked into the texture, turning 360°"></p>
+
+**In 30 seconds:** draw a rough sketch (or upload a photo, or just describe it). Sketch2Shape builds a real, textured 3D model that keeps your outline, **holes and thin parts** (handle loops, racket strings, wheel spokes). It scores how faithful the model is to your drawing, and lets you refine it, recolour any part, bake in crisp text, and export `.glb` / `.obj` / `.stl` or view it in AR. It runs on an ordinary CPU laptop.
+
+**Judge quick path (about 2 minutes):**
+1. `./run.sh` (macOS/Linux) or `.\run.ps1` (Windows). It sets itself up on first run, then open http://127.0.0.1:7860.
+2. **Upload** `samples/hard_cases/racket.png` with the prompt `a badminton racket with strings`, then click **Create 3D Shape**.
+3. Expect an open racket head with clean strings. **📐 Accuracy report** shows IoU, thin-part recall and holes found vs expected.
+4. Try **🎨 Colours & materials** (recolour parts), **🔤 Text & logo** (bake text), **📱 AR** (scan the QR), and **Download (.GLB)**.
+
+> **Keys:** none are required. With no keys, the app uses Sketch-CAD (instant, offline) and local TripoSR, and every hard-case result in §8b was measured that way. A free **Gemini** key adds the AI-CAD planner (better part structure and chat edits); the §8 sample table was measured *with* that key. HF/Replicate tokens only add optional cloud engines.
+
+
 **TechZephyr 4.0 · IIT Bhubaneswar.** Draw on the canvas, upload a photo, or describe what you need. You get **real 3D geometry** (`.glb`, plus `.obj`+texture and `.stl`) that stays faithful to your sketch. It comes with an interactive preview, a Sketch-Fidelity score, a mesh validation report, crisp baked-in text/logos, a 360° turntable and a phone **AR** view.
 
 > **Objective.** Turn rough 2D intent (a sketch, a reference photo, a sentence, or any mix) into one evolving, exportable 3D asset. Its *structure follows the drawing*, its *style follows the words and photos*, and it works on an ordinary CPU laptop with no paid APIs.
@@ -9,7 +22,7 @@
 ## Contents
 1. [Features](#1-features) · 2. [Quick start](#2-quick-start) · 3. [Using the app](#3-using-the-app) · 4. [Architecture](#4-architecture) · 5. [REST API & CLI](#5-rest-api--cli) · 6. [Models, APIs & licences](#6-models-apis--licences) · 7. [Hardware & runtimes](#7-hardware--runtimes) · 8. [Benchmark (cached samples)](#8-benchmark-cached-samples) · 9. [Limitations & failure cases](#9-limitations--failure-cases) · 10. [Troubleshooting](#10-troubleshooting) · 11. [Assumptions](#11-assumptions) · 12. [Repo layout](#12-repo-layout)
 
-See also: [DEMO.md](DEMO.md) (3-minute demo script) and [REPORT.md](REPORT.md) (design report and earlier measurements).
+See also: [DEMO.md](DEMO.md) (3-minute demo script), [docs/REPORT.md](docs/REPORT.md) (design report and earlier measurements) and [LICENSE](LICENSE) (MIT for our code; third-party models keep their own licences).
 
 ## 1. Features
 
@@ -98,13 +111,13 @@ flowchart LR
   CAP --> R{Engine}
   R -->|Gemini key| AICAD[AI-CAD<br/>vision LLM part plan → CAD]
   R -->|lathe / flat| SCAD[Sketch-CAD<br/>revolve / extrude / inflate]
-  R -->|candidates| GEN[3 Generate 4 candidates<br/>SD1.5+ControlNet batch (GPU) ·<br/>FLUX Kontext · Gemini · local render]
+  R -->|candidates| GEN["3 Generate 4 candidates<br/>SD1.5+ControlNet batch on GPU ·<br/>FLUX Kontext · Gemini · local render"]
   GEN --> BG[rembg] --> RANK[4 Rank<br/>sketch 50 · 3D-ready 30 · prompt 20]
   RANK -->|user pick / Auto| I3D[5 Image→3D<br/>TripoSR · TRELLIS · inflation]
   AICAD --> FID
   SCAD --> FID
-  I3D --> FID[6 Fidelity check<br/>render silhouette vs sketch<br/>auto-retry ≤2]
-  FID --> ACC[6b Structural accuracy<br/>IoU · thin recall · holes<br/>carve + add + procedural strings<br/>backend switch if < 0.9]
+  I3D --> FID["6 Fidelity check<br/>render silhouette vs sketch<br/>auto-retry up to 2"]
+  FID --> ACC["6b Structural accuracy<br/>IoU · thin recall · holes<br/>carve + add + procedural strings<br/>backend switch below 0.9"]
   ACC --> VAL[7 Repair + validate<br/>trimesh]
   VAL --> DEC[8 Decal bake<br/>text/logo → UV texture]
   DEC --> EXP[9 Export + reload<br/>.glb · .obj+tex · .stl]
@@ -193,6 +206,7 @@ Sketch-CAD, AI-CAD geometry, ranking, decal baking, procedural textures and vali
 
 **Assumed hardware:** any 4-core CPU, **8 GB RAM minimum (16 GB recommended)**, ~6 GB disk for weights. **No GPU needed.** Optional NVIDIA GPU (≥8 GB VRAM) enables the SD 1.5 + ControlNet candidate path and fast TripoSR (~6–8 GB VRAM).
 **Measured on:** Intel Core Ultra 7 155H laptop, 16 GB RAM, Windows 11, Python 3.13, **CPU only**.
+**Tested on (2026-11-01):** Windows 11 Home (build 26200), Python 3.13 in a fresh `.venv`, no GPU, with and without API keys; 42 of 44 tests pass (the two IoU misses are listed in §8b). A clean clone on a second machine had not been done at the time of writing.
 
 | Stage | Typical time (CPU) | Notes |
 |---|---|---|
@@ -249,9 +263,7 @@ Offline run (no network; Sketch-CAD or TripoSR as Auto picks, then refinement), 
 
 7 of 8 meet every target (holes match, thin recall ≥ 0.85, IoU ≥ 0.9). The wire basket misses the IoU target (0.85); see §9.
 
-The per-backend before/after table (raw model vs refined, with runtimes) comes from `python scripts/benchmark.py`:
-
-<!-- BENCH -->
+A per-backend benchmark (every engine on every hard case, raw vs refined, with runtimes) is included as `python scripts/benchmark.py`. Its full table isn't in this README: the run takes about 20 minutes on our CPU laptop and we didn't complete it before the deadline. The per-engine racket and lamp numbers below come from individual runs. In the strict test configuration (`tests/test_accuracy.py`, one engine, no backend switch), the chair scores IoU 0.89, just under the 0.9 target, as well as the wire basket.
 
 What refinement fixes: TripoSR and Hunyuan3D-2 both turn the racket head into a **solid disc with embossed strings** (Accuracy 0.56–0.57). After carving, the head is open and the strings are clean cylinders (0.95–0.99). Revolve fills the lamp's and teapot's handle loops (0.64); carving opens them (0.99).
 
@@ -301,5 +313,5 @@ samples/            cached results + benchmark    examples/       input sketches
 scripts/            download_models · smoke_test · make_samples · setup_local_models · make_examples
 tests/              pytest (offline)              colab/          free-GPU notebook
 Dockerfile · docker-compose.yml · Makefile · run.sh · run.ps1 · requirements*.txt · .env.example
-DEMO.md · REPORT.md · outputs/ (generated, git-ignored except examples)
+DEMO.md · LICENSE · docs/ (REPORT.md, PLAN_UPDATES.md) · outputs/ (generated, git-ignored except examples)
 ```
