@@ -112,14 +112,17 @@ def run(sketch_input, prompt: str = "", material: str = "auto", n_candidates: in
 
     # AI-CAD branch: a vision LLM reads the sketch (+ prompt), identifies its parts and
     # proportions, and rebuilds it as clean, symmetric, multi-material CAD geometry.
+    # Flat objects (star, gear, sign…) ARE their outline, so extrusion beats any re-plan.
+    flat = choose_mode(sk.mask, f"{prompt} {res.caption}") == "extrude"
     want_ai = mesh_provider == "ai_cad" or (
-        mesh_provider == "auto" and not template and not is_organic(f"{prompt} {res.caption}"))
+        mesh_provider == "auto" and not template and not flat
+        and not is_organic(f"{prompt} {res.caption}"))
     if want_ai and ai_assembly.available():
         t = stage("AI-CAD: AI reads the sketch and rebuilds it", 0.3)
         try:
             ok, png = cv2.imencode(".png", sk.clean)
             spec, model = ai_assembly.plan(prompt.strip(), sketch_png=png.tobytes())
-            raw, part_logs = ai_assembly.build_plan(spec, run_dir, prompt)
+            raw, part_logs = ai_assembly.build_plan(spec, run_dir, prompt, material)
             res.mesh_provider, res.image_provider = "ai_cad", f"none (sketch read by {model})"
             res.plan = spec
             res.logs.append(f"  AI-CAD ({model}): {spec.get('object', 'object')}, {len(spec['parts'])} parts")

@@ -569,22 +569,38 @@ def build(mask: np.ndarray, out_dir: Path, mode: str = "auto", text: str = "",
         named.append(("body", inflate(mask, depth=0.75 * mods.get("depth", 1.0), res=200)))
         logs.append("inflated silhouette")
 
+    wf, hf = mods.get("width", 1.0), mods.get("height", 1.0)
+    if wf != 1.0 or hf != 1.0:  # 'tall' / 'slim' etc. scale about the base centre (before UVs)
+        lo = np.min([m.bounds[0] for _, m in named], axis=0)
+        hi = np.max([m.bounds[1] for _, m in named], axis=0)
+        c = (lo + hi) / 2
+        c[1] = lo[1]
+        T = np.diag([wf, hf, wf, 1.0])
+        T[:3, 3] = c - c * np.array([wf, hf, wf])
+        for _, m in named:
+            m.apply_transform(T)
+    from . import textures
+    lo = np.min([m.bounds[0] for _, m in named], axis=0)
+    hi = np.max([m.bounds[1] for _, m in named], axis=0)
+    tile = float((hi - lo).max()) / 3.0  # same texture density across all parts
     scene = trimesh.Scene()
+    textured = []
     for i, (part, m) in enumerate(named):
         rgb, metal, rough = look["parts"].get(part, look["body"])
         if mods.get("finish") == "glossy":
             rough = min(rough, 0.12)
         elif mods.get("finish") == "matte":
             rough = max(rough, 0.85)
-        scene.add_geometry(apply_material(m, rgb, metal, rough), geom_name=f"{part}_{i}")
-    wf, hf = mods.get("width", 1.0), mods.get("height", 1.0)
-    if wf != 1.0 or hf != 1.0:  # 'tall' / 'slim' etc. scale about the base centre
-        c = scene.bounds.mean(0)
-        c[1] = scene.bounds[0][1]
-        T = np.diag([wf, hf, wf, 1.0])
-        T[:3, 3] = c - c * np.array([wf, hf, wf])
-        for g in scene.geometry.values():
-            g.apply_transform(T)
+        mat_name = look["mat_names"].get(part, look["mat_names"]["body"])
+        mapping = ("planar" if mode == "extrude" else
+                   "cyl" if part in ("handle", "spout") else "cyl_y")
+        tm = textures.apply(m, mat_name, rgb, metal, rough, tile, mapping)
+        if tm is not None:
+            textured.append(f"{part}:{textures.canonical(mat_name)}")
+        scene.add_geometry(tm if tm is not None else apply_material(m, rgb, metal, rough),
+                           geom_name=f"{part}_{i}")
+    if textured:
+        logs.append("textures: " + ", ".join(textured))
     p = out_dir / f"sketch3d_{mode}_{uuid.uuid4().hex[:6]}.glb"
     scene.export(p)
     logs.append(f"materials: {look['summary']}")

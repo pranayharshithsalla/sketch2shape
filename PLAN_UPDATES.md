@@ -61,3 +61,12 @@ The original plan's strategy still holds: a reliable pipeline, best-of-N with a 
 - **Sketch reading fixes:** thick, detailed drawings are no longer collapsed into a convex blob (the hull rule now only applies to small detached arcs). Body width comes from the drawn walls (steep lines only), so handles on both sides stay handles. Leaning hand drawings are straightened row by row before revolving. Two handles are both handles; "spout" only for teapots, kettles and jugs.
 - **AI-CAD (new default with a Gemini key):** the vision LLM reads the sketch plus prompt and returns a part plan with measured proportions, idealised: symmetric, smooth, consistent. It is built as multi-material CAD. Hollow lathe walls are kept in order, handles are smooth Catmull-Rom swept tubes, and the user's explicit colours override the model's. A front-silhouette fidelity score is reported. Organic subjects go to TripoSR. Without a key, or on failure, it falls back to the local engines.
 - **Refine in chat:** an AI-CAD result can be handed to the AI Designer and edited in conversation (verified: bottle → "thicker handle, silver cap").
+
+# Update 7 (31 Oct 2026, ~H8): real textures (#2)
+
+- `src/textures.py`: 27 procedural textures generated in numpy (~20 ms each, cached), tinted by the part colour, with per-material metallic, roughness and alpha (glass and crystal are transparent).
+- UVs: cylindrical around the part axis with the wrap-around seam split (no smear), planar box mapping for flat-faced parts; one texture scale across the whole object.
+- Wired into Sketch-CAD (per part: body / cap / rim / base / handle), AI-CAD and the AI Designer (the model's material per part, overridden by explicit prompt words), and into the material preset.
+- Export: textures embedded in the GLB and shipped as PNGs in the OBJ zip. Repair and watertight checks use a merged geometry-only copy, so UV seams are not mistaken for holes.
+- Also: flat objects (star, gear…) stay on extrude even with AI available, and AI plans get one automatic self-check round that reattaches floating parts.
+- Verified: marble mug + gold handle, wood bottle + silver cap, copper star, glass cup, gold trophy on a black marble base, wooden chair with a red leather seat. 19 tests pass.

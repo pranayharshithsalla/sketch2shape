@@ -173,6 +173,24 @@ def refine_in_chat(handoff):
     return (*view, gr.Tabs(selected="designer"))
 
 
+def _already_running(port: int) -> bool:
+    """True if a Sketch2Shape server already answers on this port."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=1.5) as r:
+            return b"Sketch2Shape" in r.read(4096) or r.status == 200
+    except Exception:
+        return False
+
+
+def _free_ram_gb() -> float:
+    try:
+        import psutil
+        return psutil.virtual_memory().available / 1e9
+    except Exception:
+        return 99.0  # unknown: try the preload anyway
+
+
 def make_gif(glb):
     """Runs after the model is shown, so the spin preview never delays the main result."""
     if not glb:
@@ -298,14 +316,22 @@ if __name__ == "__main__":
                     help="default: first free port from 7860 upwards")
     ap.add_argument("--offline", action="store_true", help="no network: Sketch-CAD + local TripoSR only")
     a = ap.parse_args()
+    if a.port is None and _already_running(7860):
+        print("Sketch2Shape is already running: open http://127.0.0.1:7860\n"
+              "(Each extra copy loads its own AI models and can run the PC out of memory. "
+              "Use --port 7861 if you really want a second one.)")
+        raise SystemExit(0)
     if a.offline:
         config.set_offline()
     from src import caption_local, triposr_local
 
     def _warm():  # load local models in the background so the first click is fast
-        caption_local._load()
-        if triposr_local.available():
-            triposr_local.get_model()
+        try:
+            caption_local._load()
+            if triposr_local.available() and _free_ram_gb() >= 3.0:
+                triposr_local.get_model()
+        except Exception as e:  # e.g. low RAM: models load on first use instead
+            print(f"Background model preload skipped ({type(e).__name__}); models will load on first use.")
     threading.Thread(target=_warm, daemon=True).start()
     build().queue(default_concurrency_limit=2).launch(
         server_port=a.port, share=a.share, theme=gr.themes.Soft(), allowed_paths=[str(config.OUTPUTS)])

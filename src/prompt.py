@@ -146,9 +146,12 @@ def parse(text: str, preset: str = "auto") -> dict:
     body = resolve(body_rgb, body_mat)
     res_parts = {p: resolve(d.get("rgb") or (None if d.get("mat") else body[0]), d.get("mat") or body_mat)
                  for p, d in parts.items()}
-    bits = [f"body {_name(body)}"] + [f"{p} {_name(v)}" for p, v in res_parts.items()]
+    mat_names = {"body": body_mat, **{p: d.get("mat") or body_mat for p, d in parts.items()}}
+    bits = [f"body {_name(body)}{' ' + body_mat if body_mat else ''}"] + [
+        f"{p} {_name(v)}{' ' + mat_names[p] if mat_names.get(p) else ''}" for p, v in res_parts.items()]
     return {"body": body, "parts": res_parts, "summary": "; ".join(bits),
-            "body_explicit": body_rgb is not None or body_mat is not None}
+            "body_explicit": body_rgb is not None or body_mat is not None,
+            "mat_names": mat_names}  # material per part, for procedural textures
 
 
 def _name(v) -> str:

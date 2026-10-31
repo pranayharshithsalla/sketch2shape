@@ -133,10 +133,59 @@ def plan(prompt: str, current: dict | None = None,
                                 name=f"planner:{m}", retries=0)
             if not isinstance(spec, dict) or not spec.get("parts"):
                 raise ProviderError("plan has no parts")
-            return spec, m
+            return _self_check(spec, m), m
         except Exception as e:
             errs.append(f"{m}: {str(e)[:120]}")
     raise ProviderError("AI planner unavailable: " + " | ".join(errs))
+
+
+def floating_parts(spec: dict) -> list[str]:
+    """Names of parts whose box doesn't touch any other part (gap > 2% of object size).
+    Models sometimes misplace a lid or cup in the air; one repair round fixes that."""
+    boxes = []
+    for p in spec.get("parts") or []:
+        try:
+            m = _primitive(p)
+            if m is None:
+                continue
+            rx, ry, rz = np.radians(_vec(p.get("rotation"), 3, [0, 0, 0]))
+            m.apply_transform(trimesh.transformations.euler_matrix(rx, ry, rz, "sxyz"))
+            if str(p.get("shape")).lower() != "tube":
+                m.apply_translation(_vec(p.get("position"), 3, [0, 0, 0]))
+            boxes.append((str(p.get("name", p.get("role", "part"))), m.bounds))
+        except Exception:
+            continue
+    if len(boxes) < 2:
+        return []
+    lo = np.min([b[0] for _, b in boxes], axis=0)
+    hi = np.max([b[1] for _, b in boxes], axis=0)
+    tol = 0.02 * float((hi - lo).max())
+    out = []
+    for i, (name, a) in enumerate(boxes):
+        touches = any(np.all(a[0] - tol <= b[1]) and np.all(b[0] - tol <= a[1])
+                      for j, (_, b) in enumerate(boxes) if j != i)
+        if not touches:
+            out.append(name)
+    return out
+
+
+def _self_check(spec: dict, model: str) -> dict:
+    """If parts float free, ask the same model once to reattach them; keep the better plan."""
+    loose = floating_parts(spec)
+    if not loose:
+        return spec
+    try:
+        fix = _ask(model, _request_text(
+            f"These parts are floating and don't touch the rest of the object: {', '.join(loose)}. "
+            "Move/resize ONLY what is needed so every part is attached (touching or slightly "
+            "overlapping its neighbour). Keep the design, colours and proportions.", spec, []))
+        if isinstance(fix, dict) and fix.get("parts") and len(floating_parts(fix)) < len(loose):
+            fix.setdefault("reply", spec.get("reply"))
+            log.info("self-check reattached %d floating part(s)", len(loose) - len(floating_parts(fix)))
+            return fix
+    except Exception as e:
+        log.warning("self-check skipped: %s", e)
+    return spec
 
 
 # ------------------------------------------------------------------ geometry
@@ -251,13 +300,13 @@ def _hex(c, default=(150, 150, 150)):
     return tuple(int(m.group(1)[i:i + 2], 16) for i in (0, 2, 4)) if m else default
 
 
-def build_plan(spec: dict, out_dir: Path, prompt: str = "") -> tuple[str, list[str]]:
+def build_plan(spec: dict, out_dir: Path, prompt: str = "", preset: str = "auto") -> tuple[str, list[str]]:
     """Build the planner's parts as a multi-material GLB. Returns (glb path, log lines)."""
     from .prompt import parse as parse_look
     from .sketch3d import apply_material
-    look = parse_look(prompt)  # explicit prompt colours win over the model's guesses
-    scene = trimesh.Scene()
-    logs, n_ok = [], 0
+    from . import textures
+    look = parse_look(prompt, preset)  # explicit prompt colours win over the model's guesses
+    built, logs = [], []
     for i, p in enumerate(spec.get("parts") or []):
         if not isinstance(p, dict):
             continue
@@ -269,10 +318,20 @@ def build_plan(spec: dict, out_dir: Path, prompt: str = "") -> tuple[str, list[s
         if m is None or not len(m.faces):
             continue
         rx, ry, rz = np.radians(_vec(p.get("rotation"), 3, [0, 0, 0]))
-        m.apply_transform(trimesh.transformations.euler_matrix(rx, ry, rz, "sxyz"))
+        R = trimesh.transformations.euler_matrix(rx, ry, rz, "sxyz")
+        m.apply_transform(R)
         pos = _vec(p.get("position"), 3, [0, 0, 0])
-        if str(p.get("shape")).lower() != "tube":  # tube points are already absolute
+        shape = str(p.get("shape", "box")).lower()
+        if shape != "tube":  # tube points are already absolute
             m.apply_translation(pos)
+        built.append((i, p, m, shape, R[:3, :3] @ np.array([0, 1.0, 0])))
+    if not built:
+        raise ProviderError("AI plan contained no buildable parts")
+    lo = np.min([m.bounds[0] for *_, m, _, _ in built], axis=0)
+    hi = np.max([m.bounds[1] for *_, m, _, _ in built], axis=0)
+    tile = float((hi - lo).max()) / 3.0  # same texture density across all parts
+    scene, n_ok, textured = trimesh.Scene(), 0, []
+    for i, p, m, shape, axis in built:
         role = str(p.get("role", "body")).lower()
         mat = str(p.get("material", "paint")).lower()
         metal, rough = MATERIAL_PBR.get(mat, (0.0, 0.5))
@@ -280,12 +339,22 @@ def build_plan(spec: dict, out_dir: Path, prompt: str = "") -> tuple[str, list[s
         part_key = {"lid": "cap", "holder": "handle", "grip": "handle"}.get(role, role)
         if part_key in look["parts"]:
             rgb, metal, rough = look["parts"][part_key]
+            mat = look["mat_names"].get(part_key) or mat
         elif look.get("body_explicit") and (part_key == "body" or "body" in str(p.get("name", "")).lower()):
             rgb, metal, rough = look["body"]  # the user's colour/material beats the model's guess
-        apply_material(m, rgb, metal, rough)
-        scene.add_geometry(m, geom_name=f"{i:02d}_{re.sub(r'[^a-z0-9]+', '_', str(p.get('name', role)).lower())}")
+            mat = look["mat_names"].get("body") or mat
+        mapping = "planar" if shape == "box" else ("cyl" if shape == "tube" else "axis")
+        tm = textures.apply(m, mat, rgb, metal, rough, tile, mapping, axis=axis)
+        if tm is not None:
+            textured.append(textures.canonical(mat))
+        else:
+            apply_material(m, rgb, metal, rough)
+        scene.add_geometry(tm if tm is not None else m,
+                           geom_name=f"{i:02d}_{re.sub(r'[^a-z0-9]+', '_', str(p.get('name', role)).lower())}")
         n_ok += 1
         logs.append(f"{p.get('name', role)}: {p.get('shape')} {p.get('size')} {p.get('color')} {mat}")
+    if textured:
+        logs.append("textures: " + ", ".join(sorted(set(textured))))
     if n_ok == 0:
         raise ProviderError("AI plan contained no buildable parts")
     path = out_dir / f"ai_parts_{uuid.uuid4().hex[:6]}.glb"

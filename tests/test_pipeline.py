@@ -102,3 +102,17 @@ def test_ai_cad_helpers_offline(tmp_path):
     body = next(g for k, g in s.geometry.items() if "body" in k)
     assert tuple(body.visual.material.baseColorFactor[:3]) != (0x12, 0x34, 0x56)  # violet, not the model's
     assert is_organic("a brown teddy bear") and not is_organic("a gold trophy")
+
+
+@pytest.mark.parametrize("material", ["wood", "marble", "gold", "leather", "glass", "fabric", "stone"])
+def test_material_textures(tmp_path, material):
+    """Every material gets a real texture, UVs survive export, seams don't break watertightness."""
+    from src.textures import SPECS, apply
+    assert material in SPECS
+    sk = preprocess(EX / "mug.png")
+    raw, _, logs = build(sk.mask, tmp_path, "revolve", f"a {material} mug", strokes=sk.scribble > 0)
+    assert any(f"body:{material}" in l for l in logs)
+    out = finalize(raw, tmp_path)
+    assert out["report"]["watertight"] and "texture" in out["report"]["colour"]
+    box = apply(trimesh.creation.box(extents=[2, 1, 1]), material, (120, 80, 40), 0, 0.5, 1.0, "planar")
+    assert box.visual.uv.shape == (len(box.vertices), 2)

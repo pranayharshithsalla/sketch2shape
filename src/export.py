@@ -27,21 +27,40 @@ def _has_colour(g: trimesh.Trimesh) -> str:
     return "none"
 
 
+def geometry_only(g: trimesh.Trimesh) -> trimesh.Trimesh:
+    """Same faces (same order) with duplicate vertices merged. Textured meshes duplicate
+    vertices along UV seams, which makes a closed solid *look* open to connectivity checks."""
+    m = trimesh.Trimesh(g.vertices.copy(), g.faces.copy(), process=False)
+    m.merge_vertices()
+    return m
+
+
+def is_closed(g: trimesh.Trimesh) -> bool:
+    return geometry_only(g).is_watertight
+
+
 def _repair(g: trimesh.Trimesh, min_frac: float = 0.01) -> trimesh.Trimesh:
-    if not isinstance(g.visual, trimesh.visual.TextureVisuals):  # merging would break UV seams
+    textured = isinstance(g.visual, trimesh.visual.TextureVisuals) and g.visual.uv is not None
+    if not textured:  # merging would break UV seams
         g.merge_vertices()
     g.update_faces(g.nondegenerate_faces())
     g.update_faces(g.unique_faces())
     g.remove_unreferenced_vertices()
-    # Drop floating specks (< 1% of faces) left by reconstruction
-    parts = g.split(only_watertight=False)
-    if len(parts) > 1:
-        keep = [p for p in parts if len(p.faces) >= min_frac * len(g.faces)]
-        if keep and len(keep) < len(parts):
-            g = trimesh.util.concatenate(keep)
-    trimesh.repair.fix_normals(g)
-    if not g.is_watertight:
-        trimesh.repair.fill_holes(g)
+    # Drop floating specks (< 1% of faces) left by reconstruction; components are found on
+    # the merged geometry so UV seams / per-face UV islands don't count as separate pieces
+    geo = geometry_only(g)
+    labels = trimesh.graph.connected_component_labels(geo.face_adjacency, node_count=len(geo.faces))
+    sizes = np.bincount(labels)
+    if len(sizes) > 1:
+        keep = sizes[labels] >= min_frac * len(g.faces)
+        if keep.any() and not keep.all():
+            g.update_faces(keep)
+            g.remove_unreferenced_vertices()
+            geo = geometry_only(g)
+    if not textured:
+        trimesh.repair.fix_normals(g)
+        if not g.is_watertight:
+            trimesh.repair.fill_holes(g)
     return g
 
 
@@ -98,7 +117,7 @@ def finalize(raw_glb: str, out_dir: Path, name: str = "model") -> dict:
         "vertices": int(n_v),
         "faces": int(n_f),
         "extents": [round(float(x), 3) for x in (hi - lo) * scale],
-        "watertight": all(m.is_watertight for m in meshes),
+        "watertight": all(is_closed(m) for m in meshes),
         "parts": len(meshes),
         "colour": colour,
         "glb_reopens": True,
