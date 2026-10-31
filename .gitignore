@@ -25,3 +25,20 @@ outputs/ai_*/
 outputs/t2i_*.png
 outputs/pytest_*/
 outputs/_chat/
+# per-session / scratch outputs (cached showcase results live in samples/)
+outputs/design_*/
+outputs/cands_*/
+outputs/sample_*/
+outputs/smoke/
+outputs/_dtest/
+samples/*/decal_tmp.glb
+# accuracy debug: keep only the summary renders (outputs/debug/*.png)
+outputs/debug/*/
+outputs/debug/*.glb
+outputs/debug/*.py
+outputs/debug/*.log
+outputs/bench/
+outputs/pytest_hard_*/
+outputs/pytest_*
+outputs/*_retry/
+outputs/run_*_retry/

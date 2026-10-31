@@ -25,13 +25,21 @@ from .prompt import parse as prompt_parse
 LATHE_WORDS = {"mug", "cup", "vase", "bottle", "glass", "goblet", "bowl", "jar", "pot", "lamp",
                "candle", "pawn", "chess", "column", "pillar", "tower", "teapot", "kettle", "jug",
                "flask", "can", "bucket", "barrel", "lampshade", "trophy", "urn", "tumbler", "wine",
-               "pitcher", "teacup", "beaker", "carafe", "chalice", "planter", "flowerpot"}
+               "pitcher", "teacup", "beaker", "carafe", "chalice", "planter", "flowerpot", "basket",
+               "bin", "hamper"}
 CONTAINER_WORDS = {"mug", "cup", "vase", "bowl", "jar", "pot", "glass", "goblet", "bucket",
                    "tumbler", "jug", "urn", "wine", "flask", "pitcher", "teacup", "beaker", "carafe",
-                   "chalice", "planter", "flowerpot"}
+                   "chalice", "planter", "flowerpot", "basket", "bin", "hamper"}
 SPOUT_WORDS = {"teapot", "kettle", "jug", "pitcher", "watering", "gravy", "carafe"}
 FLAT_WORDS = {"sign", "logo", "letter", "coin", "medal", "badge", "gear", "cookie", "plate",
-              "key", "star", "heart", "leaf", "card", "token", "emblem", "tile", "shield"}
+              "key", "star", "heart", "leaf", "card", "token", "emblem", "tile", "shield",
+              # flat objects whose holes / strings / loops matter: extruded from the hole-aware mask
+              "racket", "racquet", "scissors", "wheel", "hoop", "frame", "hanger", "spatula",
+              "comb", "wrench", "sword", "paddle", "slingshot", "keyring"}
+
+THIN_FLAT_WORDS = {"racket", "racquet", "scissors", "wheel", "hoop", "frame", "hanger", "spatula",
+                   "comb", "wrench", "sword", "paddle", "slingshot", "keyring", "key"}
+
 
 def words_of(text: str) -> set[str]:
     return set(re.findall(r"[a-z]+", (text or "").lower()))
@@ -563,7 +571,8 @@ def build(mask: np.ndarray, out_dir: Path, mode: str = "auto", text: str = "",
         logs.append(f"revolved body (hollow={hollow}, sections={mods.get('sections', 96)}) + "
                     f"{n - 1} attached part(s)")
     elif mode == "extrude":
-        named.append(("body", extrude(mask, depth_frac=0.15 * mods.get("depth", 1.0))))
+        thin_obj = bool(words_of(text) & THIN_FLAT_WORDS)  # rackets, scissors, wheels are slim
+        named.append(("body", extrude(mask, depth_frac=(0.045 if thin_obj else 0.15) * mods.get("depth", 1.0))))
         logs.append("extruded flat outline")
     else:
         named.append(("body", inflate(mask, depth=0.75 * mods.get("depth", 1.0), res=200)))

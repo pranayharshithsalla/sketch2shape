@@ -125,3 +125,16 @@ def test_studio_attachments():
     assert image_png({"background": None, "layers": [], "composite": np.zeros((64, 64, 4), np.uint8)}) is None
     png = image_png(str(EX / "mug.png"))
     assert png and png[:4] == b"\x89PNG"
+
+
+def test_dark_canvas_cyan_strokes():
+    """New UI: cyan ink on the dark grid canvas is read as the sketch; a bare grid is empty."""
+    import cv2
+    from src.designer import image_png
+    from src.ui_theme import grid_canvas
+    layer = np.zeros((512, 512, 4), np.uint8)
+    cv2.rectangle(layer, (180, 120), (330, 420), (0, 229, 255, 255), 5)
+    bg = grid_canvas()
+    sk = preprocess({"background": bg, "layers": [layer], "composite": bg})
+    assert sk.mask.sum() > 20000
+    assert image_png({"background": bg, "layers": [np.zeros_like(layer)], "composite": bg}) is None

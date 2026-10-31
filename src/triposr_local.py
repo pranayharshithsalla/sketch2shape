@@ -99,7 +99,10 @@ def get_model():
     return _model
 
 
-def reconstruct(rgba: np.ndarray, out_dir: Path, resolution: int = 192) -> str:
+RESOLUTION = int(__import__("os").getenv("TRIPOSR_RES", "256"))  # marching cubes grid
+
+
+def reconstruct(rgba: np.ndarray, out_dir: Path, resolution: int | None = None) -> str:
     """rgba: background-removed object image. Returns path of a vertex-coloured GLB (y-up)."""
     import torch
     import trimesh
@@ -110,7 +113,18 @@ def reconstruct(rgba: np.ndarray, out_dir: Path, resolution: int = 192) -> str:
     img = Image.fromarray((rgb * 255).astype(np.uint8))
     with torch.no_grad():
         codes = model([img], device=device())
-        mesh = model.extract_mesh(codes, True, resolution=resolution)[0]
+        mesh = None
+        for res in dict.fromkeys([resolution or RESOLUTION, 192, 128]):  # OOM fallback: coarser grid
+            try:
+                mesh = model.extract_mesh(codes, True, resolution=res)[0]
+                break
+            except (MemoryError, RuntimeError) as e:
+                if "memory" not in str(e).lower() and not isinstance(e, MemoryError):
+                    raise
+                if device() == "cuda":
+                    torch.cuda.empty_cache()
+        if mesh is None:
+            raise MemoryError("TripoSR: out of memory even at resolution 128")
     trimesh.smoothing.filter_taubin(mesh, iterations=6)  # remove marching-cubes grid noise
     # TripoSR outputs z-up, object facing +x; rotate to glTF y-up, facing the viewer (+z)
     mesh.apply_transform(trimesh.transformations.rotation_matrix(-np.pi / 2, [1, 0, 0]))

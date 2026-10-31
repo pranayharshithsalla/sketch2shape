@@ -58,6 +58,25 @@ def mesh_trellis(rgba: np.ndarray, out_dir: Path, seed: int = 0) -> str:
     return _pick_glb(with_hf_tokens(call))
 
 
+HUNYUAN_SPACE = os.getenv("HUNYUAN_SPACE", "tencent/Hunyuan3D-2")
+
+
+def mesh_hunyuan3d(rgba: np.ndarray, out_dir: Path, seed: int = 0) -> str:
+    """Hunyuan3D-2 shape generation (octree resolution 256) on its official HF ZeroGPU Space.
+    Untextured geometry; colours come back via refinement's nearest-point transfer / materials."""
+    from gradio_client import Client, handle_file
+    img = _save_png(rgba, out_dir)
+
+    def call(token):
+        c = Client(HUNYUAN_SPACE, token=token, verbose=False)
+        kw = dict(image=handle_file(img), steps=30, guidance_scale=5.0, seed=seed, octree_resolution=256,
+                  check_box_rembg=True, num_chunks=8000, randomize_seed=False, api_name="/shape_generation")
+        if HUNYUAN_SPACE.endswith("Hunyuan3D-2"):
+            kw["caption"] = ""
+        return c.predict(**kw)
+    return _pick_glb(with_hf_tokens(call))
+
+
 def mesh_sf3d(rgba: np.ndarray, out_dir: Path, seed: int = 0) -> str:
     from gradio_client import Client, handle_file
     c = Client(SF3D_SPACE, token=config.HF_TOKEN, verbose=False)
@@ -136,6 +155,7 @@ PROVIDERS = {
     "trellis": (mesh_trellis, lambda: bool(config.HF_TOKEN)),
     "triposr_local": (mesh_triposr_local, _triposr_ok),
     "sf3d": (mesh_sf3d, lambda: bool(config.HF_TOKEN)),
+    "hunyuan3d": (mesh_hunyuan3d, lambda: bool(config.HF_TOKEN)),
     "replicate_trellis": (mesh_replicate_trellis, lambda: bool(config.REPLICATE_API_TOKEN)),
     "local": (mesh_local, lambda: True),
 }

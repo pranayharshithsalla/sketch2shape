@@ -30,15 +30,26 @@ class Sketch:
     mask: np.ndarray
     rgb: np.ndarray
     stroke_px: int
+    analysis: object = None  # analyze.InputAnalysis: holes, thin parts, string families
 
 
 def _to_rgba(inp) -> np.ndarray:
     """Accept Gradio ImageEditor dicts, PIL, ndarray or a file path; return RGBA uint8."""
     if isinstance(inp, dict):  # gr.Sketchpad / gr.ImageEditor value
+        # Prefer the drawn strokes layer(s): ink of any colour (cyan on the dark grid canvas)
+        # becomes black-on-white, so the background/grid never leaks into the sketch
+        layers = [np.asarray(l) for l in (inp.get("layers") or []) if l is not None]
+        layers = [l for l in layers if l.ndim == 3 and l.shape[-1] == 4 and l[..., 3].max() > 0]
+        if layers:
+            alpha = np.max([l[..., 3] for l in layers], axis=0)
+            ink = np.full(alpha.shape + (4,), 255, np.uint8)
+            ink[..., :3] = 255 - alpha[..., None]  # opaque ink -> black
+            return ink
         img = inp.get("composite")
         if img is None:
-            layers = [l for l in (inp.get("layers") or []) if l is not None]
-            img = layers[-1] if layers else inp.get("background")
+            img = inp.get("background")
+        if img is not None and np.asarray(img)[..., :3].mean() < 60:
+            raise PreprocessError("The canvas is empty: draw something first.")  # bare dark grid
         inp = img
     if inp is None:
         raise PreprocessError("No sketch provided: draw on the canvas or upload an image.")
@@ -95,7 +106,9 @@ def fill_outline(gray_black_on_white: np.ndarray) -> np.ndarray:
     return _fill_outline(strokes)
 
 
-def preprocess(inp, denoise: bool = True) -> Sketch:
+def preprocess(inp, denoise: bool = True, text: str = "", overrides: dict | None = None) -> Sketch:
+    """text: the prompt (resolves ambiguous single-line loops); overrides: {region: is_hole}
+    from the click-to-toggle hole tool."""
     rgb = composite_on_white(_to_rgba(inp))
     gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
 
@@ -137,6 +150,15 @@ def preprocess(inp, denoise: bool = True) -> Sketch:
         strokes = cv2.dilate(strokes, np.ones((2, 2), np.uint8))
 
     clean = 255 - strokes
-    mask = _fill_outline(strokes)
+    outer = _fill_outline(strokes)
+    analysis = None
+    try:  # hole-aware solid: handle loops, racket heads and open frames stay open
+        from .analyze import analyze
+        analysis = analyze(strokes > 0, outer, text, overrides)
+        mask = analysis.mask
+    except Exception as e:  # never block a run on the analysis
+        import logging
+        logging.getLogger(__name__).warning("input analysis failed: %s", e)
+        mask = outer
     return Sketch(clean=clean, scribble=strokes, mask=mask,
-                  rgb=np.stack([clean] * 3, -1), stroke_px=stroke_px)
+                  rgb=np.stack([clean] * 3, -1), stroke_px=stroke_px, analysis=analysis)

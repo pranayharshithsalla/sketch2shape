@@ -1,0 +1,80 @@
+{
+  "sample": "lamp",
+  "cached": true,
+  "prompt": "a table lamp with a cream shade and a brass stem",
+  "decal": null,
+  "engine": "ai_cad",
+  "final_seconds": 15.72,
+  "timings": {
+    "Preprocess": 0.06,
+    "Caption": 0.0,
+    "AI-CAD": 15.46,
+    "Export": 0.12,
+    "total": 15.72
+  },
+  "fidelity": 0.598,
+  "validation": {
+    "vertices": 564,
+    "faces": 896,
+    "extents": [
+      0.75,
+      1.0,
+      0.75
+    ],
+    "watertight": true,
+    "parts": 3,
+    "colour": "texture",
+    "glb_reopens": true,
+    "glb_size_kb": 67.1
+  },
+  "candidates": {
+    "provider": "local",
+    "auto_pick": 1,
+    "scores": [
+      {
+        "score": 0.929,
+        "sketch": 0.981,
+        "ready": 0.93,
+        "prompt": 0.796
+      },
+      {
+        "score": 0.925,
+        "sketch": 0.987,
+        "ready": 0.93,
+        "prompt": 0.762
+      },
+      {
+        "score": 0.911,
+        "sketch": 0.964,
+        "ready": 0.93,
+        "prompt": 0.75
+      },
+      {
+        "score": 0.929,
+        "sketch": 0.986,
+        "ready": 0.931,
+        "prompt": 0.786
+      }
+    ],
+    "seconds": 5.34
+  },
+  "image_to_3d_from_best_candidate": {
+    "engine": "triposr_local",
+    "seconds": 46.18,
+    "fidelity": 0.857,
+    "validation": {
+      "vertices": 20608,
+      "faces": 41212,
+      "extents": [
+        0.698,
+        1.0,
+        0.609
+      ],
+      "watertight": true,
+      "parts": 1,
+      "colour": "vertex colours",
+      "glb_reopens": true,
+      "glb_size_kb": 806.0
+    }
+  }
+}

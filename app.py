@@ -9,9 +9,12 @@ import traceback
 import gradio as gr
 import numpy as np
 
-from src import config, designer, image2mesh, sketch2image
+from src import api, config, designer, image2mesh, sketch2image
 from src.designer import Session
-from src.pipeline import StageError, run
+from src.ui_theme import (CSS, CYAN, LOGO_HTML, MODES, THEME, grid_canvas, metrics_html,
+                          panel_title)
+from src.decal import FONTS, SIDES
+from src.pipeline import StageError, candidate_to_3d, make_candidates, run
 from src.prompt import MATERIALS
 from src.render import turntable_gif
 from src.templates import available_names, make_sketch
@@ -26,6 +29,8 @@ EXAMPLE_PROMPTS = {
     "teddy": "a brown teddy bear",
 }
 EXAMPLES = [[str(p), EXAMPLE_PROMPTS.get(p.stem, "")] for p in sorted(config.EXAMPLES.glob("*.png"))]
+SERVER = {"port": 7860, "ar": False}  # set at launch; AR links need the LAN-served FastAPI app
+CONTROLS = [("Shape + style", "both"), ("Shape only", "shape"), ("Style & colour only", "style")]
 
 
 def _understood(r, prompt: str) -> str:
@@ -85,8 +90,11 @@ def generate(draw, upload, prompt, material, n_cands, img_prov, mesh_prov, skip_
         f"({rep['glb_size_kb']} KB) |\n"
         f"| **Total time** | **{r.timings['total']} s** |\n\n"
         + " · ".join(f"{k} {v}s" for k, v in r.timings.items() if k != "total")
+        + ("\n\n" + accuracy_md(r.accuracy) if r.accuracy else "")
     )
-    pre = [(r.images["sketch_clean"], "cleaned sketch"), (r.images["sketch_mask"], "filled silhouette")]
+    pre = [(r.images["sketch_clean"], "cleaned sketch"), (r.images["sketch_mask"], "hole-aware silhouette")]
+    if r.images.get("analysis"):
+        pre.append((r.images["analysis"], "detected holes (amber) · strings (magenta) · thin parts (red)"))
     handoff = {"plan": r.plan, "glb": r.glb, "files": [r.glb, r.obj_zip, r.stl], "report": r.report,
                "prompt": prompt or r.caption or "my sketch", "model": r.mesh_provider,
                "seconds": r.timings.get("total")}
@@ -126,26 +134,95 @@ def _unedited_template(draw, prompt) -> bool:
     return float(np.abs(c.astype(int) - t.astype(int)).mean()) < 6.0
 
 
+def _canvas_reset():
+    g = grid_canvas()
+    return {"background": g, "layers": [], "composite": g}
+
+
+def _ar(glb):
+    """(QR image, markdown) for viewing `glb` in AR on a phone on the same network."""
+    if not glb or not SERVER["ar"]:
+        return None, ("AR needs the LAN server: run `python app.py` (not `--share`) and open the page "
+                      "from this PC; the QR then points your phone at it.")
+    url = f"http://{api.lan_ip()}:{SERVER['port']}/ar?m={api.rel(glb)}"
+    return api.qr_png(url), (f"**Scan with your phone** (same Wi-Fi) → tap *View in your room*.  \n"
+                             f"[{url}]({url})  \nAndroid: Scene Viewer · iPhone: Quick Look · desktop: 3D view.")
+
+
+def accuracy_md(a: dict | None) -> str:
+    """Accuracy report: IoU, thin-feature recall, expected vs found holes, refinement history."""
+    if not a:
+        return "*No sketch/photo in this design yet: structure is checked against an input drawing.*"
+    b = a.get("before", {})
+    lines = [f"### Accuracy **{a['accuracy']:.0%}**" + (f"  (raw model {b.get('accuracy', 0):.0%})" if a.get("refined") else ""),
+             "| | raw | final |", "|---|---|---|",
+             f"| Silhouette IoU | {b.get('iou', 0):.2f} | {a['iou']:.2f} |",
+             f"| Thin-feature recall | {b.get('thin_recall', 0):.2f} | {a['thin_recall']:.2f} |",
+             f"| Through-holes expected / open | {b.get('holes_expected', 0)} / {b.get('holes_open', 0)} | "
+             f"{a['holes_expected']} / {a['holes_open']} |",
+             f"| Extra holes | {b.get('holes_extra', 0)} | {a['holes_extra']} |",
+             "", f"*Input: {a.get('summary', '')}*  ", f"*Accuracy = 0.4·IoU + 0.3·thin recall + 0.3·hole match; "
+             f"target {a.get('target', 0.9):.0%}. Carving only opens holes visible from the sketch's side.*"]
+    if a.get("warning"):
+        lines.insert(1, f"> ⚠️ **{a['warning']}**")
+    hist = a.get("history") or []
+    if len(hist) > 1:
+        lines += ["", "**Refinement history:** " + " → ".join(
+            f"{h['step']} ({h['accuracy']:.0%})" if "accuracy" in h else f"{h['step']} (failed)" for h in hist)]
+    return "\n".join(lines)
+
+
+def _acc_images(cur) -> list:
+    a = cur.get("accuracy_report") if cur else None
+    if not a or not a.get("refined"):
+        return []
+    from pathlib import Path
+    d = Path(a["raw_glb"]).parent / "refine" / "debug"
+    if not d.exists():
+        d = Path(cur["glb"]).parent / "refine" / "debug"
+    out = []
+    for f, cap in (("refine_before.png", "raw model vs input"), ("refine_after.png", "refined vs input")):
+        if (d / f).exists():
+            out.append((str(d / f), cap + " · green ok · red missing · blue extra"))
+    return out
+
+
 def _designer_view(session, history):
-    """Outputs: clear the text box, canvas and upload; show chat, model, files, stats."""
+    """Outputs (in d_out order): clear inputs, chat, model, download, files, metrics, title,
+    create-button label, session, version timeline, validation report, AR QR, AR text,
+    accuracy report, before/after images, raw-model toggle."""
     cur = session.current
     if not cur:
-        return "", None, None, history, None, None, "", session
+        return ("", _canvas_reset(), None, history, None, gr.DownloadButton(value=None, interactive=False),
+                None, metrics_html(None, None, None, None), panel_title("3D Preview", "nothing yet"),
+                gr.Button(value="Create 3D Shape"), session, gr.Radio(choices=[], value=None), None,
+                None, "", accuracy_md(None), [], gr.Checkbox(value=False, interactive=False))
     rep = cur["report"]
-    stats = (f"**Version {len(session.versions)}** · {rep['parts']} parts · {rep['faces']:,} faces · "
-             f"{'watertight' if rep['watertight'] else 'open'} · built in {cur['seconds']} s with `{cur['model']}`")
-    return "", None, None, history, cur["glb"], cur["files"], stats, session
+    title = panel_title("3D Preview", f'<span class="badge">v{len(session.versions)} · {cur["model"]}</span>')
+    tl = designer.timeline(session)
+    report = {**rep, "texture_present": "texture" in str(rep.get("colour", "")),
+              "decals": [d.get("text") or "logo" for d in cur.get("decals") or []],
+              "sketch_fidelity": cur.get("accuracy"), "engine": cur["model"], "build_seconds": cur.get("seconds")}
+    qr, ar_md = _ar(cur["glb"])
+    return ("", _canvas_reset(), None, history, cur["glb"],
+            gr.DownloadButton(value=cur["glb"], interactive=True), cur["files"],
+            metrics_html(cur.get("accuracy"), bool(rep.get("watertight")), rep.get("parts"), cur.get("seconds")),
+            title, gr.Button(value="Update 3D Shape"), session, gr.Radio(choices=tl, value=tl[-1]), report,
+            qr, ar_md, accuracy_md(cur.get("accuracy_report")), _acc_images(cur),
+            gr.Checkbox(value=False, interactive=bool(cur.get("raw_glb"))))
 
 
-def _attachment(canvas, upload):
-    """The image sent with this message: an upload wins, else a non-empty canvas."""
-    if upload is not None:
+def _attachment(mode, canvas, upload):
+    """The image sent with this message, chosen by the mode: canvas, upload, or none."""
+    if mode == MODES[1]:
         return upload
-    return canvas if designer.image_png(canvas) is not None else None
+    if mode == MODES[0]:
+        return canvas if designer.image_png(canvas) is not None else None
+    return None
 
 
-def designer_turn(message, canvas, upload, history, session):
-    image = _attachment(canvas, upload)
+def designer_turn(mode, message, canvas, upload, control, history, session):
+    image = _attachment(mode, canvas, upload)
     history = list(history or [])
     if message and message.strip():
         history.append({"role": "user", "content": message})
@@ -156,7 +233,7 @@ def designer_turn(message, canvas, upload, history, session):
         shot.write_bytes(png)
         history.append({"role": "user", "content": {"path": str(shot)}})
     try:
-        session, reply = designer.turn(session, message, image)
+        session, reply = designer.turn(session, message, image, control or "both", photo=mode == MODES[1])
     except Exception as e:
         traceback.print_exc()
         reply = f"⚠️ I couldn't apply that ({str(e)[:200]}). Try rephrasing, or undo."
@@ -171,7 +248,206 @@ def designer_undo(history, session):
 
 
 def designer_new():
-    return "", None, None, [], None, None, "", designer.Session()
+    return _designer_view(designer.Session(), [])
+
+
+def _say(history, text):
+    return list(history or []) + [{"role": "assistant", "content": text}]
+
+
+def _hex(color) -> str:
+    """ColorPicker may return '#rrggbb' or 'rgba(r, g, b, a)'."""
+    m = re.findall(r"[\d.]+", str(color or ""))
+    if str(color).startswith("rgb") and len(m) >= 3:
+        return "#" + "".join(f"{int(float(v)):02x}" for v in m[:3])
+    return color or "#FFFFFF"
+
+
+def designer_decal(text, logo, font, color, side, x, y, size, rot, move, history, session):
+    try:
+        session, reply = designer.add_decal(session, text, logo, _hex(color), font, x, y, size, rot, side,
+                                            replace_last=bool(move))
+    except Exception as e:
+        traceback.print_exc()
+        reply = f"⚠️ Couldn't bake that: {str(e)[:200]}"
+    return _designer_view(session, _say(history, reply))
+
+
+def decal_live(text, logo, font, color, side, x, y, size, rot, move, history, session):
+    """Slider released with 'live move' on: re-place the last decal (like dragging it)."""
+    cur = session.current if session else None
+    if not move or not cur or cur.get("kind") != "decal":
+        return [gr.skip()] * 18
+    return designer_decal(text, logo, font, color, side, x, y, size, rot, True, history, session)
+
+
+def versions_revert(choice, history, session):
+    tl = designer.timeline(session)
+    if choice not in tl:
+        return _designer_view(session, _say(history, "Pick a version in the timeline first."))
+    session, reply = designer.revert(session, tl.index(choice))
+    return _designer_view(session, _say(history, reply))
+
+
+def versions_compare(choice, session):
+    tl = designer.timeline(session)
+    if choice not in tl:
+        return gr.Model3D(visible=False), gr.HTML(visible=False)
+    v = session.versions[tl.index(choice)]
+    cur = session.current
+    note = (f'<div class="panel-title"><h3>Compare</h3><span>{choice}  ⟷  current '
+            f'v{len(session.versions)}</span></div>')
+    return gr.Model3D(value=v["glb"], visible=True), gr.HTML(note, visible=True) if cur else gr.HTML(visible=False)
+
+
+def studio_candidates(mode, message, canvas, upload, auto, history, session, as_is=False,
+                      progress=gr.Progress()):
+    """Generate 4 candidates (one batch where the provider supports it), rank them, and either
+    wait for the user's pick or (Auto) send the best one straight to 3D."""
+    image = _attachment(mode, canvas, upload)
+    if image is None and not (message or "").strip():
+        raise gr.Error("Draw or upload something (or type a prompt) to generate candidates.")
+    if session.run_dir is None:
+        session.run_dir = config.OUTPUTS / __import__("time").strftime("design_%Y%m%d_%H%M%S")
+        session.run_dir.mkdir(parents=True, exist_ok=True)
+    progress(0.1, desc="Generating + ranking 4 candidates")
+    try:
+        png0 = designer.image_png(image)
+        if png0 is not None:  # the candidates' sketch is the shape target for accuracy/refinement
+            session.ref_png, session.ref_text = png0, (message or "").strip()
+        r = make_candidates(image, message or "", 4, as_is=bool(as_is),
+                            out_dir=session.run_dir / f"cands_{len(session.versions) + 1}",
+                            hole_overrides=session.hole_overrides)
+    except Exception as e:
+        traceback.print_exc()
+        raise gr.Error(f"Candidate generation failed: {str(e)[:300]}")
+    png = designer.image_png(image)
+    state = {"run": {k: v for k, v in r.items() if k != "sketch"}, "sel": r["best"], "ref": png,
+             "prompt": (message or "").strip() or r["caption"] or "candidate"}
+    t = r["timings"]
+    note = ("**Used as-is** (clean illustration: no diffusion redraw). " if r.get("bypass") else "") + (
+            f"Generated {len(r['cands'])} candidates with `{r['provider']}` in {t['total']} s "
+            f"(generate {t['generate']} s · background {t['remove_bg']} s · rank {t['rank']} s). "
+            f"Best match: #{r['best'] + 1}.")
+    gallery = [(c["path"], c["label"]) for c in r["cands"]]
+    if auto:
+        view = studio_build(state, _say(history, note + " Auto: building it in 3D."), session, progress)
+        return (gr.Gallery(value=gallery, visible=True, selected_index=r["best"]), gr.Button(visible=True),
+                state, *view)
+    return (gr.Gallery(value=gallery, visible=True, selected_index=r["best"]), gr.Button(visible=True), state,
+            *_designer_view(session, _say(history, note + " Click a card, then *Build 3D*.")))
+
+
+def cand_select(state, evt: gr.SelectData):
+    if state:
+        state["sel"] = evt.index
+    return state
+
+
+def studio_build(state, history, session, progress=gr.Progress()):
+    """Only the chosen candidate goes through the expensive image-to-3D step."""
+    if not state:
+        raise gr.Error("Generate candidates first.")
+    i = state["sel"] if state["sel"] is not None else state["run"]["best"]
+    c = state["run"]["cands"][i]
+    progress(0.3, desc=f"Reconstructing candidate #{i + 1} in 3D")
+    n = len(session.versions) + 1
+    try:
+        sk = designer.analysis_of(session) if state.get("ref") is not None else None
+        out = candidate_to_3d(c["rgba_path"], session.run_dir / f"v{n}", name=f"model_v{n}",
+                              analysis=sk.analysis if sk is not None else None, procedural=session.procedural)
+    except Exception as e:
+        traceback.print_exc()
+        raise gr.Error(f"3D reconstruction failed: {str(e)[:300]}")
+    acc = (out.get("accuracy") or {}).get("accuracy") or designer.sketch_accuracy(out["glb"], state.get("ref"))
+    designer.add_version(session, out["glb"], [out["glb"], out["obj_zip"], out["stl"]], out["report"],
+                         f"{state['prompt']} (candidate #{i + 1})", out["provider"], "candidate",
+                         out["timings"]["total"], accuracy=acc)
+    session.current["accuracy_report"], session.current["raw_glb"] = out.get("accuracy"), out.get("raw_glb")
+    session.history.append((f"(build candidate #{i + 1})", f"Built with {out['provider']}."))
+    return _designer_view(session, _say(history, f"Built candidate #{i + 1} with `{out['provider']}` "
+                                                 f"in {out['timings']['total']} s."))
+
+
+def _analysis_png(mode, canvas, upload):
+    image = _attachment(mode, canvas, upload)
+    return designer.image_png(image)
+
+
+def studio_analyse(mode, canvas, upload, message, session):
+    """Detect holes / thin parts / strings in the current sketch and show them for correction."""
+    png = _analysis_png(mode, canvas, upload)
+    if png is None:
+        raise gr.Error("Draw or upload a sketch first.")
+    import hashlib
+    h = hashlib.md5(png).hexdigest()
+    if getattr(session, "hole_src", None) != h:  # corrections belong to one drawing
+        session.hole_overrides, session.hole_src = {}, h
+    session.ref_png, session.ref_text = png, (message or "").strip()
+    sk = designer.analysis_of(session)
+    from src.analyze import overlay
+    a = sk.analysis
+    md = (f"**{a.hole_count} through-hole(s)** · {len(a.families)} string/wire famil"
+          f"{'y' if len(a.families) == 1 else 'ies'} · thin parts {'yes' if a.thin.sum() > 10 else 'no'}  \n"
+          "Amber = hole, magenta = strings (rebuilt as tubes), red = thin parts. "
+          "**Click any enclosed area to mark/unmark it as a hole.**")
+    return overlay(a, sk.clean), md, session
+
+
+def studio_toggle_hole(session, evt: gr.SelectData):
+    if session is None or session.ref_png is None:
+        raise gr.Error("Press *Analyse sketch* first.")
+    from src.analyze import overlay, toggle
+    sk = designer.analysis_of(session)
+    x, y = evt.index[0], evt.index[1]
+    session.hole_overrides = toggle(sk.analysis, int(x), int(y), session.hole_overrides)
+    sk = designer.analysis_of(session)
+    return overlay(sk.analysis, sk.clean), session
+
+
+def studio_procedural(flag, session):
+    session.procedural = bool(flag)
+    return session
+
+
+def studio_show_raw(show, session):
+    cur = session.current if session else None
+    if not cur:
+        return gr.skip()
+    return cur["raw_glb"] if show and cur.get("raw_glb") else cur["glb"]
+
+
+def studio_spin(session):
+    cur = session.current if session else None
+    if not cur:
+        raise gr.Error("Create a model first.")
+    return make_gif(cur["glb"])
+
+
+def switch_mode(mode, session):
+    """Top-bar mode selector: show the matching input and adapt the prompt hint."""
+    editing = session is not None and session.current is not None
+    hints = {MODES[0]: "Optional: describe it (e.g. a gold trophy with two handles)",
+             MODES[1]: "Optional: what is it, and how should it look?",
+             MODES[2]: "Describe what you need, e.g. a wooden chair with a red leather seat"}
+    hint = "Describe a change, e.g. make the handles thinner" if editing else hints[mode]
+    return (gr.Sketchpad(visible=mode == MODES[0]), gr.Image(visible=mode == MODES[1]),
+            gr.HTML(visible=mode == MODES[2]), gr.Textbox(placeholder=hint))
+
+
+def rotate_view(action, cam, session):
+    """Rotation controls: orbit / tilt / zoom / reset the 3D preview camera."""
+    alpha, beta, radius = cam or (45.0, 75.0, None)
+    step = {"left": (-45, 0, 1), "right": (45, 0, 1), "up": (0, -15, 1), "down": (0, 15, 1),
+            "in": (0, 0, 0.8), "out": (0, 0, 1.25)}
+    if action == "reset":
+        alpha, beta, radius = 45.0, 75.0, None
+    else:
+        da, db, dr = step[action]
+        alpha, beta = (alpha + da) % 360, min(max(beta + db, 5), 175)
+        radius = (radius or 3.0) * dr if dr != 1 else radius
+    glb = session.current["glb"] if session is not None and session.current else None
+    return gr.Model3D(value=glb, camera_position=(alpha, beta, radius)), [alpha, beta, radius]
 
 
 def refine_in_chat(handoff):
@@ -213,7 +489,8 @@ def make_gif(glb):
     if not glb:
         return None
     try:
-        return turntable_gif(glb, str(glb).replace("model.glb", "spin.gif"))
+        from pathlib import Path
+        return turntable_gif(glb, Path(glb).with_name(Path(glb).stem + "_spin.gif"))
     except Exception:
         traceback.print_exc()
         return None
@@ -221,56 +498,142 @@ def make_gif(glb):
 
 def build() -> gr.Blocks:
     with gr.Blocks(title="Sketch2Shape") as demo:
-        gr.Markdown("# ✏️ → 🧊 Sketch2Shape\nDraw or upload a sketch, **or just type what you want**, "
-                    "and get a textured, validated 3D asset (.glb / .obj / .stl).")
-        gr.Markdown(_status_md())
+        with gr.Row(elem_id="topbar"):
+            with gr.Column(scale=2, min_width=280):
+                gr.HTML(LOGO_HTML)
+            with gr.Column(scale=3, min_width=520):
+                mode = gr.Radio(MODES, value=MODES[0], show_label=False, container=False, elem_id="modes")
         with gr.Tabs() as main_tabs:
-            with gr.Tab("🎨 Studio: sketch, photo or words → 3D, then refine", id="designer"):
-                gr.Markdown("**Start** with a sketch, a photo, a description, or any mix. **Then keep refining "
-                            "the same model**: type a change, draw it, or upload a reference picture "
-                            "(*make the legs thinner*, *handles like this sketch*, *a body like this photo*). "
-                            "Every turn edits the previous result and is saved as a version you can undo.")
-                with gr.Row():
-                    with gr.Column(scale=5):
-                        chat = gr.Chatbot(label="Conversation", height=380)
+            with gr.Tab("Studio", id="designer"):
+                with gr.Row(equal_height=False):
+                    with gr.Column(scale=5, elem_classes="panel"):
+                        gr.HTML(panel_title("Sketch", "draw · upload · or just explain"))
+                        d_canvas = gr.Sketchpad(value=_canvas_reset(), type="numpy", canvas_size=(512, 512),
+                                                height=440, show_label=False, elem_id="sketchpad",
+                                                brush=gr.Brush(colors=[CYAN, "#FFFFFF", "#F59E0B"],
+                                                               default_size=4, color_mode="defaults"),
+                                                eraser=gr.Eraser(default_size=12))
+                        d_upload = gr.Image(type="numpy", image_mode="RGBA", height=440, show_label=False,
+                                            visible=False)
+                        d_explain = gr.HTML('<div class="metric" style="padding:22px"><div class="v ok">💬</div>'
+                                            '<div class="k" style="text-transform:none;font-size:13px">'
+                                            'Describe the object below: shape, parts, colours, materials. '
+                                            'You can switch to a sketch or photo at any time.</div></div>',
+                                            visible=False)
+                        chat_box = gr.Textbox(show_label=False, lines=3, max_lines=6,
+                                              placeholder="Optional: describe it (e.g. a gold trophy with two handles)")
+                        control = gr.Radio(CONTROLS, value="both", label="This input controls", elem_id="control")
+                        with gr.Accordion("🕳️ Holes & thin parts", open=False):
+                            with gr.Row():
+                                analyse_btn = gr.Button("🔍 Analyse sketch", size="sm")
+                                proc_chk = gr.Checkbox(True, label="Rebuild thin parts procedurally")
+                                asis_chk = gr.Checkbox(False, label="Use image as-is (skip generation)")
+                            hole_img = gr.Image(show_label=False, interactive=False, height=300, type="numpy")
+                            hole_md = gr.Markdown("Detects handle loops, open frames, strings and wires so "
+                                                  "they survive into 3D. Click a region to correct it.")
+                        create_btn = gr.Button("Create 3D Shape", variant="primary", elem_id="create-btn")
+                        with gr.Row(equal_height=True):
+                            cand_btn = gr.Button("🎲 Generate 4 candidates", size="sm", scale=2)
+                            auto_pick = gr.Checkbox(False, label="Auto: best one → 3D", scale=1)
+                        cand_gallery = gr.Gallery(visible=False, columns=2, height="auto", allow_preview=False,
+                                                  object_fit="contain",
+                                                  label="Candidates · sketch 50% · 3D-ready 30% · prompt 20%")
+                        build_cand = gr.Button("Build 3D from the selected candidate", visible=False, size="sm")
+                        cand_state = gr.State()
                         with gr.Row():
-                            chat_box = gr.Textbox(show_label=False, scale=5, autofocus=True, lines=2,
-                                                  placeholder="Describe what you want, or what to change "
-                                                              "(optional when you attach a sketch/photo)")
-                            send = gr.Button("Send", variant="primary", scale=1)
-                        gr.Markdown("**✏️ Attach a sketch or 🖼️ image to this message** (optional)")
-                        with gr.Tabs():
-                            with gr.Tab("Draw"):
-                                d_canvas = gr.Sketchpad(type="numpy", canvas_size=(512, 512), height=480,
-                                                        label="Sketch (sent with your next message)",
-                                                        brush=gr.Brush(colors=["#111111"], default_size=4,
-                                                                       color_mode="fixed"))
-                            with gr.Tab("Upload"):
-                                d_upload = gr.Image(type="numpy", image_mode="RGBA", height=480,
-                                                    label="Sketch photo or reference image")
-                        with gr.Row():
-                            undo_btn = gr.Button("↩️ Undo last change")
-                            new_btn = gr.Button("🆕 New design")
-                        gr.Examples(["a wooden chair with 4 legs, no armrests and a backrest",
-                                     "a red sports car with black wheels", "a gold trophy on a black marble base",
-                                     "make the legs thinner", "make the handles look like this sketch",
-                                     "make the body look like this photo", "paint it navy blue",
-                                     "make it twice as tall"],
-                                    inputs=chat_box, label="Try (first an object, then a change)")
-                    with gr.Column(scale=6):
-                        d_model = gr.Model3D(label="Current version (drag to rotate)", height=470,
-                                             clear_color=(0.95, 0.95, 0.97, 1.0))
-                        d_stats = gr.Markdown()
-                        d_files = gr.File(label="Download this version (.glb, .obj zip, .stl)",
-                                          file_count="multiple")
+                            undo_btn = gr.Button("↩ Undo", size="sm")
+                            new_btn = gr.Button("＋ New design", size="sm")
+                        with gr.Accordion("Conversation & versions", open=False):
+                            chat = gr.Chatbot(show_label=False, height=320, elem_id="chat")
+                        gr.Examples(["a gold trophy on a black marble base", "a wooden chair with a red leather seat",
+                                     "make the handles thinner", "paint it navy blue", "make it twice as tall"],
+                                    inputs=chat_box, label="Try")
+                    with gr.Column(scale=6, elem_classes="panel"):
+                        d_title = gr.HTML(panel_title("3D Preview", "nothing yet"))
+                        d_model = gr.Model3D(show_label=False, height=470, elem_id="viewport",
+                                             clear_color=(0.075, 0.114, 0.212, 1.0))
+                        with gr.Row(elem_classes="ctl"):
+                            rot = {k: gr.Button(lbl, size="sm", elem_classes="ctl") for k, lbl in
+                                   [("left", "⟲ Left"), ("right", "Right ⟳"), ("up", "▲ Tilt"),
+                                    ("down", "▼ Tilt"), ("in", "＋ Zoom"), ("out", "－ Zoom"),
+                                    ("reset", "⤾ Reset")]}
+                        d_metrics = gr.HTML(metrics_html(None, None, None, None))
+                        d_dl = gr.DownloadButton("Download 3D Model (.GLB)", variant="primary",
+                                                 elem_id="dl-btn", interactive=False)
+                        with gr.Accordion("🕘 Version timeline · revert · compare", open=True):
+                            versions = gr.Radio([], show_label=False, elem_id="timeline")
+                            with gr.Row():
+                                revert_btn = gr.Button("↩ Revert to selected", size="sm")
+                                compare_btn = gr.Button("⟷ Compare with current", size="sm")
+                            compare_note = gr.HTML(visible=False)
+                            compare_model = gr.Model3D(visible=False, height=300, show_label=False,
+                                                       clear_color=(0.075, 0.114, 0.212, 1.0))
+                        with gr.Accordion("🔤 Text & logo · baked into the texture", open=False):
+                            with gr.Row():
+                                dec_text = gr.Textbox(label="Text", placeholder="e.g. BRAND NAME", scale=3)
+                                dec_color = gr.ColorPicker("#111111", label="Colour", scale=1)
+                            with gr.Row():
+                                dec_font = gr.Dropdown(list(FONTS), value="Bold sans", label="Font")
+                                dec_side = gr.Radio(list(SIDES), value="front", label="Side")
+                            dec_logo = gr.Image(label="…or a logo (PNG, transparent background)", type="numpy",
+                                                image_mode="RGBA", height=120)
+                            with gr.Row():
+                                dec_x = gr.Slider(0, 1, 0.5, step=0.01, label="← position →")
+                                dec_y = gr.Slider(0, 1, 0.5, step=0.01, label="↓ position ↑")
+                            with gr.Row():
+                                dec_size = gr.Slider(0.05, 1.2, 0.4, step=0.01, label="Size")
+                                dec_rot = gr.Slider(-180, 180, 0, step=1, label="Rotation °")
+                            with gr.Row():
+                                dec_btn = gr.Button("Bake onto model", variant="primary", size="sm")
+                                dec_move = gr.Checkbox(False, label="Live move: sliders re-place the last decal")
+                        with gr.Accordion("📱 View in AR · 360° turntable", open=False):
+                            with gr.Row():
+                                ar_qr = gr.Image(show_label=False, height=180, width=180, interactive=False,
+                                                 type="pil")
+                                ar_md = gr.Markdown()
+                            spin_btn = gr.Button("Render 360° turntable (GIF)", size="sm")
+                            spin_img = gr.Image(show_label=False, type="filepath", height=240, interactive=False)
+                        with gr.Accordion("📐 Accuracy report · holes · thin parts", open=False):
+                            acc_md = gr.Markdown(accuracy_md(None))
+                            raw_chk = gr.Checkbox(False, label="Show raw model (before refinement)", interactive=False)
+                            acc_imgs = gr.Gallery(show_label=False, columns=2, height=260, allow_preview=True)
+                        with gr.Accordion("✅ Validation report", open=False):
+                            d_report = gr.JSON(show_label=False)
+                        with gr.Accordion("Other formats (.obj + textures, .stl)", open=False):
+                            d_files = gr.File(show_label=False, file_count="multiple")
                 session = gr.State(Session())
-                d_out = [chat_box, d_canvas, d_upload, chat, d_model, d_files, d_stats, session]
-                send.click(designer_turn, [chat_box, d_canvas, d_upload, chat, session], d_out)
-                chat_box.submit(designer_turn, [chat_box, d_canvas, d_upload, chat, session], d_out)
+                cam = gr.State([45.0, 75.0, None])
+                d_out = [chat_box, d_canvas, d_upload, chat, d_model, d_dl, d_files, d_metrics, d_title,
+                         create_btn, session, versions, d_report, ar_qr, ar_md, acc_md, acc_imgs, raw_chk]
+                turn_in = [mode, chat_box, d_canvas, d_upload, control, chat, session]
+                create_btn.click(designer_turn, turn_in, d_out)
+                chat_box.submit(designer_turn, turn_in, d_out)
+                cand_btn.click(studio_candidates, [mode, chat_box, d_canvas, d_upload, auto_pick, chat, session,
+                                                   asis_chk],
+                               [cand_gallery, build_cand, cand_state] + d_out)
+                cand_gallery.select(cand_select, cand_state, cand_state)
+                build_cand.click(studio_build, [cand_state, chat, session], d_out)
+                dec_in = [dec_text, dec_logo, dec_font, dec_color, dec_side, dec_x, dec_y, dec_size, dec_rot,
+                          dec_move, chat, session]
+                dec_btn.click(designer_decal, dec_in, d_out)
+                for sl in (dec_x, dec_y, dec_size, dec_rot):
+                    sl.release(decal_live, dec_in, d_out)
+                revert_btn.click(versions_revert, [versions, chat, session], d_out)
+                compare_btn.click(versions_compare, [versions, session], [compare_model, compare_note])
+                spin_btn.click(studio_spin, session, spin_img)
+                analyse_btn.click(studio_analyse, [mode, d_canvas, d_upload, chat_box, session],
+                                  [hole_img, hole_md, session])
+                hole_img.select(studio_toggle_hole, session, [hole_img, session])
+                proc_chk.change(studio_procedural, [proc_chk, session], session)
+                raw_chk.change(studio_show_raw, [raw_chk, session], d_model)
                 undo_btn.click(designer_undo, [chat, session], d_out)
                 new_btn.click(designer_new, None, d_out)
+                mode.change(switch_mode, [mode, session], [d_canvas, d_upload, d_explain, chat_box])
+                for k, btn in rot.items():
+                    btn.click(rotate_view, [gr.State(k), cam, session], [d_model, cam])
 
-            with gr.Tab("⚙️ Sketch → 3D (engines & details)", id="sketch"):
+            with gr.Tab("Advanced: engines & pipeline", id="sketch"):
+                gr.Markdown(_status_md())
                 with gr.Row():
                     with gr.Column(scale=5):
                         with gr.Tabs() as tabs:
@@ -324,7 +687,7 @@ def build() -> gr.Blocks:
                         to_chat = gr.Button("🎨 Refine this model in the Studio", visible=False)
                 with gr.Row():
                     pre = gr.Gallery(label="1 · Preprocessing", columns=2, height=220)
-                    cands = gr.Gallery(label="2 · Candidates ranked by Sketch Fidelity Score", columns=4, height=220)
+                    cands = gr.Gallery(label="2 · Candidates ranked (sketch 50% · 3D-ready 30% · prompt 20%)", columns=4, height=220)
                     spin = gr.Image(label="3 · 360° turntable (rendered after the model)", height=220, type="filepath")
                 log = gr.Textbox(label="Pipeline log", lines=10, max_lines=30)
                 glb_state = gr.State()
@@ -345,6 +708,7 @@ if __name__ == "__main__":
     ap.add_argument("--port", type=int, default=None,
                     help="default: first free port from 7860 upwards")
     ap.add_argument("--offline", action="store_true", help="no network: Sketch-CAD + local TripoSR only")
+    ap.add_argument("--host", default="0.0.0.0", help="0.0.0.0 lets a phone on the same Wi-Fi open AR links")
     a = ap.parse_args()
     if a.port is None and _already_running(7860):
         print("Sketch2Shape is already running: open http://127.0.0.1:7860\n"
@@ -353,6 +717,9 @@ if __name__ == "__main__":
         raise SystemExit(0)
     if a.offline:
         config.set_offline()
+    if config.use_gpu():  # CUDA: SD1.5 + ControlNet (batched candidates) and TripoSR on GPU go first
+        from src import gpu_local
+        gpu_local.register()
     from src import caption_local, triposr_local
 
     def _warm():  # load local models in the background so the first click is fast
@@ -363,5 +730,16 @@ if __name__ == "__main__":
         except Exception as e:  # e.g. low RAM: models load on first use instead
             print(f"Background model preload skipped ({type(e).__name__}); models will load on first use.")
     threading.Thread(target=_warm, daemon=True).start()
-    build().queue(default_concurrency_limit=2).launch(
-        server_port=a.port, share=a.share, theme=gr.themes.Soft(), allowed_paths=[str(config.OUTPUTS)])
+    demo = build().queue(default_concurrency_limit=2)
+    if a.share:  # public gradio.live link (the LAN AR viewer + REST API need the default mode)
+        demo.launch(server_port=a.port, share=True, theme=THEME, css=CSS, allowed_paths=[str(config.OUTPUTS)])
+    else:
+        import uvicorn
+        from fastapi import FastAPI
+        SERVER.update(port=a.port or 7860, ar=True)
+        app = FastAPI(title="Sketch2Shape API", description=api.__doc__)
+        api.register(app)
+        app = gr.mount_gradio_app(app, demo, path="", theme=THEME, css=CSS, allowed_paths=[str(config.OUTPUTS)])
+        print(f"Sketch2Shape: http://127.0.0.1:{SERVER['port']}  ·  phones on this Wi-Fi: "
+              f"http://{api.lan_ip()}:{SERVER['port']}  ·  API docs: /docs")
+        uvicorn.run(app, host=a.host, port=SERVER["port"], log_level="warning")

@@ -1,0 +1,42 @@
+{
+  "genie_lamp": {
+    "prompt": "a gold genie oil lamp with a looped handle",
+    "expected_holes": 1,
+    "string_grid": false
+  },
+  "racket": {
+    "prompt": "a badminton racket with strings",
+    "expected_holes": 1,
+    "string_grid": true
+  },
+  "mug": {
+    "prompt": "a white mug with a handle",
+    "expected_holes": 1,
+    "string_grid": false
+  },
+  "teapot": {
+    "prompt": "a teapot with a handle and spout",
+    "expected_holes": 1,
+    "string_grid": false
+  },
+  "chair": {
+    "prompt": "a wooden chair with an open slatted back",
+    "expected_holes": 3,
+    "string_grid": false
+  },
+  "bicycle_wheel": {
+    "prompt": "a bicycle wheel with spokes",
+    "expected_holes": 1,
+    "string_grid": true
+  },
+  "wire_basket": {
+    "prompt": "a wire basket with a handle",
+    "expected_holes": 2,
+    "string_grid": true
+  },
+  "scissors": {
+    "prompt": "a pair of scissors with finger loops",
+    "expected_holes": 2,
+    "string_grid": false
+  }
+}

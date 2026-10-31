@@ -1,0 +1,80 @@
+{
+  "sample": "car",
+  "cached": true,
+  "prompt": "a red toy car",
+  "decal": null,
+  "engine": "ai_cad",
+  "final_seconds": 33.65,
+  "timings": {
+    "Preprocess": 0.05,
+    "Caption": 0.0,
+    "AI-CAD": 33.43,
+    "Export": 0.17,
+    "total": 33.65
+  },
+  "fidelity": 0.579,
+  "validation": {
+    "vertices": 1472,
+    "faces": 1632,
+    "extents": [
+      1.0,
+      0.52,
+      0.527
+    ],
+    "watertight": true,
+    "parts": 16,
+    "colour": "texture",
+    "glb_reopens": true,
+    "glb_size_kb": 52.5
+  },
+  "candidates": {
+    "provider": "local",
+    "auto_pick": 1,
+    "scores": [
+      {
+        "score": 0.96,
+        "sketch": 0.969,
+        "ready": 0.976,
+        "prompt": 0.914
+      },
+      {
+        "score": 0.96,
+        "sketch": 0.967,
+        "ready": 0.975,
+        "prompt": 0.921
+      },
+      {
+        "score": 0.954,
+        "sketch": 0.969,
+        "ready": 0.976,
+        "prompt": 0.885
+      },
+      {
+        "score": 0.959,
+        "sketch": 0.974,
+        "ready": 0.977,
+        "prompt": 0.892
+      }
+    ],
+    "seconds": 5.52
+  },
+  "image_to_3d_from_best_candidate": {
+    "engine": "triposr_local",
+    "seconds": 47.03,
+    "fidelity": 0.926,
+    "validation": {
+      "vertices": 16226,
+      "faces": 32448,
+      "extents": [
+        1.0,
+        0.414,
+        0.263
+      ],
+      "watertight": true,
+      "parts": 1,
+      "colour": "vertex colours",
+      "glb_reopens": true,
+      "glb_size_kb": 634.8
+    }
+  }
+}

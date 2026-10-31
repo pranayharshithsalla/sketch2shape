@@ -75,7 +75,7 @@ MATERIAL_PBR = {  # (metallic, roughness)
 
 
 def available() -> bool:
-    return bool(config.GEMINI_API_KEY)
+    return bool(config.GEMINI_API_KEY) and not config.OFFLINE["on"]
 
 
 SKETCH_BRIEF = """The attached image is the user's hand-drawn SKETCH of the object (front view).

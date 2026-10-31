@@ -20,7 +20,7 @@ def _load(glb: str) -> trimesh.Trimesh:
             base = getattr(mat, "baseColorFactor", None)
             has_tex = getattr(mat, "baseColorTexture", None) is not None and g.visual.uv is not None
             if has_tex:
-                g.visual = g.visual.to_color()
+                g = _texture_to_face_colours(g)
             else:  # flat PBR colour (sketch3d meshes): stored linear, shown as sRGB
                 from .sketch3d import linear_to_srgb
                 c = np.array([*linear_to_srgb(base[:3]), 255] if base is not None else [180, 180, 180, 255],
@@ -28,6 +28,21 @@ def _load(glb: str) -> trimesh.Trimesh:
                 g.visual = trimesh.visual.ColorVisuals(g, vertex_colors=np.tile(c, (len(g.vertices), 1)))
         parts.append(g)
     return trimesh.util.concatenate(parts)
+
+
+def _texture_to_face_colours(g: trimesh.Trimesh, min_faces: int = 30000) -> trimesh.Trimesh:
+    """Sample the texture at every face's UV centroid (after subdividing coarse meshes), so
+    baked decals and texture detail show in previews, not just per-vertex averages."""
+    for _ in range(7):
+        if len(g.faces) >= min_faces:
+            break
+        g = g.subdivide()  # interpolates UVs along with the vertices
+    tex = np.asarray(g.visual.material.baseColorTexture.convert("RGB"))
+    uv = g.visual.uv[g.faces].mean(1) % 1.0
+    col = tex[((1 - uv[:, 1]) * (tex.shape[0] - 1)).astype(int), (uv[:, 0] * (tex.shape[1] - 1)).astype(int)]
+    out = trimesh.Trimesh(g.vertices, g.faces, process=False)
+    out.visual = trimesh.visual.ColorVisuals(out, face_colors=np.c_[col, np.full(len(col), 255)].astype(np.uint8))
+    return out
 
 
 def render_view(mesh: trimesh.Trimesh, yaw_deg: float, size: int = 384, pitch_deg: float = 15) -> Image.Image:
@@ -79,3 +94,18 @@ def turntable_gif(glb: str, out_gif: str | Path, frames: int = 12, size: int = 2
     ims = [render_view(mesh, 360 * k / frames, size) for k in range(frames)]
     ims[0].save(out_gif, save_all=True, append_images=ims[1:], duration=90, loop=0, optimize=True)
     return str(out_gif)
+
+
+
+def debug_views(glb: str, out_png: str | Path, size: int = 256, title: str = "") -> str:
+    """Front / side / top renders side by side (the debug dumps in outputs/debug/)."""
+    mesh = _load(glb)
+    views = [render_view(mesh, 0, size, 0), render_view(mesh, 90, size, 0), render_view(mesh, 0, size, 89)]
+    strip = Image.new("RGB", (size * 3, size + (18 if title else 0)), (255, 255, 255))
+    for k, im in enumerate(views):
+        strip.paste(im, (k * size, 18 if title else 0))
+    if title:
+        ImageDraw.Draw(strip).text((4, 3), title, fill=(20, 20, 20))
+    Path(out_png).parent.mkdir(parents=True, exist_ok=True)
+    strip.save(out_png)
+    return str(out_png)

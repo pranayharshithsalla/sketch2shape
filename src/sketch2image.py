@@ -41,7 +41,8 @@ MATERIALS = {
     "fabric": "upholstered in soft fabric",
 }
 NEGATIVE = ("multiple objects, text, watermark, cropped, cut off, busy background, shadow on floor, "
-            "lowres, blurry, deformed, extra parts")
+            "lowres, blurry, deformed, extra parts, solid filled blob, closed frame, missing handle, "
+            "missing strings")
 
 
 def _png_bytes(arr: np.ndarray) -> bytes:
@@ -199,13 +200,17 @@ def gen_local(sketch: Sketch, prompt: str, seed: int) -> np.ndarray:
     words = re.findall(r"[a-z]+", subject.lower())
     base = next((np.array(_COLOURS[w], np.float32) for w in words if w in _COLOURS),
                 np.array((95, 140, 200), np.float32))
+    rng = np.random.default_rng(seed)  # each seed: a different light, depth profile and tint
+    if seed >= 1000:
+        base = np.clip(base * rng.uniform(0.88, 1.12, 3), 0, 255)
     mask = sketch.mask.astype(np.uint8)
     dist = cv2.distanceTransform(mask, cv2.DIST_L2, 5)
-    h = np.sqrt(np.clip(dist / max(dist.max(), 1), 0, 1))
+    h = np.clip(dist / max(dist.max(), 1), 0, 1) ** [0.5, 0.35, 0.7, 0.5][(seed // 1000) % 4]
     gy, gx = np.gradient(cv2.GaussianBlur(h, (0, 0), 3))
     n = np.dstack([-gx * 40, -gy * 40, np.ones_like(h)])
     n /= np.linalg.norm(n, axis=-1, keepdims=True)
-    light = np.array([-0.4, -0.5, 0.77])
+    light = np.array([[-0.4, -0.5, 0.77], [0.4, -0.5, 0.77], [0.0, -0.7, 0.7], [-0.6, -0.2, 0.77]][(seed // 1000) % 4])
+    light = light / np.linalg.norm(light)
     shade = np.clip(n @ light, 0, 1) * 0.65 + 0.35
     img = np.full(mask.shape + (3,), 255, np.float32)
     img[mask > 0] = (base[None, None] * shade[..., None])[mask > 0]
@@ -223,6 +228,9 @@ PROVIDERS = {
 }
 
 
+BATCH: dict = {}  # provider -> fn(sketch, prompt, seeds) generating every candidate in one call
+
+
 def available() -> list[str]:
     return [p for p in config.IMAGE_PROVIDERS if p in PROVIDERS and PROVIDERS[p][1]()]
 
@@ -235,8 +243,16 @@ def generate_candidates(sketch: Sketch, prompt: str, n: int, provider: str = "au
     logs = []
     for name in order:
         fn = PROVIDERS[name][0]
-        k = 1 if name == "local" else n
+        k = max(n, 4) if name in ("local", "sd_controlnet") else n  # local/GPU candidates are cheap
         seeds = [base_seed + 1000 * i for i in range(k)]
+        if name in BATCH:
+            try:
+                imgs = BATCH[name](sketch, prompt, seeds)
+                logs.append(f"image provider '{name}' produced {len(imgs)} candidates in one batch")
+                return imgs, name, logs
+            except Exception as e:
+                logs.append(f"image provider '{name}' batch failed: {str(e)[:160]}")
+                continue
         with ThreadPoolExecutor(max_workers=k) as ex:
             futs = [ex.submit(with_retries, fn, sketch, prompt, s, name=f"image:{name}") for s in seeds]
             imgs, errs = [], []

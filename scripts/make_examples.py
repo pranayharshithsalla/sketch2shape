@@ -68,7 +68,31 @@ def toy():  # teddy bear
     return c
 
 
+def bat():  # cricket bat, front view: long flat blade, shoulders, round handle
+    c = canvas()
+    blade = np.array([[255, 560], [345, 560], [352, 250], [338, 230], [262, 230], [248, 250]], np.int32)
+    cv2.polylines(c, [blade], True, K, T)
+    cv2.line(c, (285, 230), (288, 60), K, T)               # handle
+    cv2.line(c, (315, 230), (312, 60), K, T)
+    cv2.ellipse(c, (300, 60), (12, 6), 0, 180, 360, K, T)
+    for y in (95, 130, 165):                                  # grip bands
+        cv2.line(c, (287, y), (313, y), K, 2)
+    return c
+
+
+def lamp():  # table lamp: conical shade, slim stem, round base
+    c = canvas()
+    cv2.polylines(c, [np.array([[220, 120], [380, 120], [440, 270], [160, 270]], np.int32)], True, K, T)
+    cv2.line(c, (292, 270), (292, 480), K, T)
+    cv2.line(c, (308, 270), (308, 480), K, T)
+    cv2.ellipse(c, (300, 500), (110, 22), 0, 0, 360, K, T)
+    cv2.line(c, (190, 500), (190, 520), K, T)
+    cv2.line(c, (410, 500), (410, 520), K, T)
+    cv2.ellipse(c, (300, 520), (110, 22), 0, 0, 180, K, T)
+    return c
+
+
 if __name__ == "__main__":
-    for name, fn in [("mug", mug), ("chair", chair), ("car", car), ("teddy", toy)]:
+    for name, fn in [("mug", mug), ("chair", chair), ("car", car), ("teddy", toy), ("bat", bat), ("lamp", lamp)]:
         cv2.imwrite(str(OUT / f"{name}.png"), fn())
         print("wrote", OUT / f"{name}.png")

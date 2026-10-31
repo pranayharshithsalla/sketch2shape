@@ -15,6 +15,9 @@ from PIL import Image
 
 from . import config, image2mesh, sketch2image
 
+import os
+
+STEPS = int(os.getenv("SD_STEPS", "20"))
 _pipe = None
 _tsr = None
 
@@ -36,11 +39,37 @@ def gen_sd_controlnet(sketch, prompt: str, seed: int) -> np.ndarray:
     import torch
     pipe = _get_pipe()
     cond = Image.fromarray(sketch.scribble).convert("RGB")  # white strokes on black
-    out = pipe(prompt, image=cond, num_inference_steps=25, guidance_scale=7.5,
+    out = pipe(prompt, image=cond, num_inference_steps=STEPS, guidance_scale=7.5,
                controlnet_conditioning_scale=0.9 + 0.1 * ((seed // 1000) % 3),
                negative_prompt=sketch2image.NEGATIVE,
                generator=torch.Generator("cuda").manual_seed(seed)).images[0]
     return np.array(out.convert("RGB"))
+
+
+def gen_sd_controlnet_batch(sketch, prompt: str, seeds: list[int]) -> list[np.ndarray]:
+    """All candidates in ONE batched call (one seeded generator per image)."""
+    import torch
+    pipe = _get_pipe()
+    cond = Image.fromarray(sketch.scribble).convert("RGB")
+    try:
+        out = pipe([prompt] * len(seeds), image=[cond] * len(seeds), num_inference_steps=STEPS,
+                   guidance_scale=7.5, controlnet_conditioning_scale=1.0,
+                   control_guidance_start=0.0, control_guidance_end=1.0,
+                   negative_prompt=[sketch2image.NEGATIVE] * len(seeds),
+                   generator=[torch.Generator("cuda").manual_seed(s) for s in seeds]).images
+    except torch.cuda.OutOfMemoryError:  # OOM fallback: one at a time
+        torch.cuda.empty_cache()
+        return [gen_sd_controlnet(sketch, prompt, s) for s in seeds]
+    torch.cuda.empty_cache()
+    return [np.array(o.convert("RGB")) for o in out]
+
+
+def cuda_ok() -> bool:
+    try:
+        import torch
+        return torch.cuda.is_available()
+    except Exception:
+        return False
 
 
 def _get_tsr():
@@ -73,6 +102,7 @@ def mesh_triposr(rgba: np.ndarray, out_dir: Path, seed: int = 0) -> str:
 
 def register():
     sketch2image.PROVIDERS["sd_controlnet"] = (gen_sd_controlnet, lambda: True)
+    sketch2image.BATCH["sd_controlnet"] = gen_sd_controlnet_batch
     image2mesh.PROVIDERS["triposr"] = (mesh_triposr, lambda: True)
     for lst, name in [(config.IMAGE_PROVIDERS, "sd_controlnet"), (config.MESH_PROVIDERS, "triposr")]:
         if name not in lst:

@@ -1,6 +1,9 @@
 # Tested with Python 3.13 on Windows 11 (CPU only). Python 3.10-3.13 supported.
 gradio==6.31.0
 gradio_client==2.7.2
+fastapi==0.162.0
+uvicorn==0.54.0
+qrcode==8.2
 huggingface_hub==2.4.0
 numpy==2.5.4
 onnxruntime==1.31.1

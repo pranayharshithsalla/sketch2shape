@@ -1,0 +1,5 @@
+# Extra packages for a CUDA GPU (SD 1.5 + ControlNet batched candidates, TripoSR on GPU).
+# Install torch with CUDA first: https://pytorch.org/get-started/locally/
+-r requirements.txt
+diffusers==0.42.1
+accelerate==1.15.0
