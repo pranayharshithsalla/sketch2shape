@@ -78,6 +78,39 @@ def _repair(g: trimesh.Trimesh, min_frac: float = 0.01) -> trimesh.Trimesh:
     return g
 
 
+MAX_FACES = 120_000  # web viewer / AR friendly; refined voxel meshes can reach ~2M faces
+
+
+def _cap_faces(meshes: list, cap: int = MAX_FACES) -> list:
+    """Decimate heavy vertex-coloured parts (refined meshes) so the whole model stays under
+    `cap` faces. Colours are copied back from the nearest original vertex. Textured parts
+    (decals, procedural materials) are never decimated, so their UVs stay intact."""
+    total = sum(len(m.faces) for m in meshes)
+    if total <= cap:
+        return meshes
+    from scipy.spatial import cKDTree
+    from .optimize import decimate_mesh
+    ratio = cap / total
+    out = []
+    for m in meshes:
+        v = m.visual
+        if isinstance(v, trimesh.visual.TextureVisuals) or len(m.faces) < 2000:
+            out.append(m)
+            continue
+        try:
+            d = decimate_mesh(m, target_faces=max(500, int(len(m.faces) * ratio)))
+            if v.kind in ("vertex", "face"):
+                cols = np.asarray(v.vertex_colors)
+                _, nn = cKDTree(m.vertices).query(d.vertices)
+                d.visual = trimesh.visual.ColorVisuals(d, vertex_colors=cols[nn])
+            d.metadata.update(m.metadata)
+            out.append(d)
+        except Exception as e:  # never lose a part over a failed decimation
+            log.debug("decimation skipped: %s", e)
+            out.append(m)
+    return out
+
+
 def finalize(
     raw_glb: str,
     out_dir: Path,
@@ -102,6 +135,7 @@ def finalize(
     for g in scene.dump():  # applies scene transforms
         if isinstance(g, trimesh.Trimesh) and len(g.faces):
             meshes.append(_repair(g))
+    meshes = _cap_faces(meshes)
     lo = np.min([m.bounds[0] for m in meshes], axis=0)
     hi = np.max([m.bounds[1] for m in meshes], axis=0)
     scale = 1.0 / max((hi - lo).max(), 1e-9)
