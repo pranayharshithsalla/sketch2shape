@@ -1,8 +1,9 @@
-"""Command line: sketch/photo and/or prompt -> textured .glb (+ .obj zip, .stl, report).
+"""Command line: sketch/photo and/or prompt -> textured .glb (+ .obj zip, .stl, .scad, report).
 
   python -m src.cli --sketch examples/mug.png --prompt "a red ceramic mug" --out mug.glb
   python -m src.cli --prompt "a wooden cricket bat" --decal "BRAND NAME" --out bat.glb
   python -m src.cli --sketch car.png --candidates 4 --out car.glb     # rank 4, build the best
+  python -m src.cli --sketch examples/mug.png --lods --printability   # with LODs and print pre-flight
 """
 from __future__ import annotations
 
@@ -18,7 +19,7 @@ def main(argv: list[str] | None = None) -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--sketch", help="sketch or photo (PNG/JPG); optional if --prompt is given")
     ap.add_argument("--prompt", default="", help="text prompt (optional with a sketch)")
-    ap.add_argument("--out", default="model.glb", help="output .glb path (.obj zip / .stl written beside it)")
+    ap.add_argument("--out", default="model.glb", help="output .glb path (.obj zip / .stl / .scad written beside it)")
     ap.add_argument("--engine", default="auto",
                     help="auto | ai_cad | revolve | extrude | inflate | triposr_local | trellis | local")
     ap.add_argument("--material", default="auto")
@@ -30,6 +31,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--decal-y", type=float, default=0.5)
     ap.add_argument("--decal-rotation", type=float, default=0.0)
     ap.add_argument("--turntable", action="store_true", help="also write a 360° turntable GIF")
+    ap.add_argument("--lods", action="store_true", help="generate high/medium/low LOD models")
+    ap.add_argument("--optimize", type=int, default=0, help="optimize model down to target face count")
+    ap.add_argument("--printability", action="store_true", help="run 3D print pre-flight stability analysis")
+    ap.add_argument("--scad", action="store_true", help="export OpenSCAD (.scad) source code")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--offline", action="store_true", help="no network: local engines only")
     a = ap.parse_args(argv)
@@ -75,14 +80,43 @@ def main(argv: list[str] | None = None) -> int:
                            0.5, a.decal_y, a.decal_size, a.decal_rotation)
         fin = finalize(baked["glb"], d, name="model")
         glb, report = fin["glb"], fin["report"]
+
     src = Path(glb)
     shutil.copy(src, out)
-    for ext, name in ((".stl", src.with_suffix(".stl")), ("_obj.zip", src.with_name(src.stem + "_obj.zip"))):
+    for ext, name in (
+        (".stl", src.with_suffix(".stl")),
+        ("_obj.zip", src.with_name(src.stem + "_obj.zip")),
+        (".scad", src.with_suffix(".scad")),
+    ):
         if name.exists():
             shutil.copy(name, out.with_name(out.stem + ext))
+
+    # Optional optimizations
+    if a.optimize and a.optimize > 0:
+        from .optimize import optimize_scene
+        import trimesh
+        scene = trimesh.load(out, force="scene")
+        opt = optimize_scene(scene, target_faces=a.optimize)
+        opt.export(out)
+        report["optimized_target_faces"] = a.optimize
+
+    # Optional LODs
+    if a.lods:
+        from .optimize import generate_lods
+        lod_res = generate_lods(out, out_dir=out.parent)
+        report["lods"] = lod_res["lods"]
+
+    # Optional Printability Pre-Flight Analysis
+    if a.printability:
+        from .printability import analyze_printability
+        import trimesh
+        scene = trimesh.load(out, force="scene")
+        report["printability"] = analyze_printability(scene)
+
     if a.turntable:
-        from .render import turntable_gif
-        turntable_gif(str(out), out.with_suffix(".gif"))
+        from .render import turntable
+        turntable(str(out), out.with_suffix(".gif"))
+
     # prove the written file opens
     import trimesh
     check = trimesh.load(out, force="scene")

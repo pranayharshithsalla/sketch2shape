@@ -78,8 +78,17 @@ def _repair(g: trimesh.Trimesh, min_frac: float = 0.01) -> trimesh.Trimesh:
     return g
 
 
-def finalize(raw_glb: str, out_dir: Path, name: str = "model") -> dict:
-    """Repair, normalise to a unit box centred at the origin, export and validate."""
+def finalize(
+    raw_glb: str,
+    out_dir: Path,
+    name: str = "model",
+    export_scad: bool = False,
+    run_printability: bool = False,
+    generate_lods_flag: bool = False,
+) -> dict:
+    """Repair, normalise to a unit box centred at the origin, export and validate.
+    Optional heavy features (OpenSCAD, Printability, LODs) are opt-in to keep generation fast.
+    """
     try:
         scene = trimesh.load(raw_glb, force="scene")
     except Exception as e:
@@ -97,26 +106,26 @@ def finalize(raw_glb: str, out_dir: Path, name: str = "model") -> dict:
     hi = np.max([m.bounds[1] for m in meshes], axis=0)
     scale = 1.0 / max((hi - lo).max(), 1e-9)
     out = trimesh.Scene()
-    for m, name in zip(meshes, part_names(meshes)):
+    for m, name_part in zip(meshes, part_names(meshes)):
         m.apply_translation(-(lo + hi) / 2)
         m.apply_scale(scale)
-        m.metadata["name"] = name
-        out.add_geometry(m, geom_name=name)
-    geometry_only = trimesh.util.concatenate([trimesh.Trimesh(m.vertices, m.faces, process=False)
-                                              for m in meshes])
+        m.metadata["name"] = name_part
+        out.add_geometry(m, geom_name=name_part)
+    geom_only = trimesh.util.concatenate([trimesh.Trimesh(m.vertices, m.faces, process=False)
+                                          for m in meshes])
 
     out_dir.mkdir(parents=True, exist_ok=True)
     glb = out_dir / f"{name}.glb"
     stl = out_dir / f"{name}.stl"
     obj_zip = out_dir / f"{name}_obj.zip"
     (out if len(meshes) > 1 else meshes[0]).export(glb)
-    geometry_only.export(stl)
+    geom_only.export(stl)
     obj_dir = out_dir / "obj"
     obj_dir.mkdir(exist_ok=True)
     try:
         (out if len(meshes) > 1 else meshes[0]).export(obj_dir / f"{name}.obj")
     except Exception:  # some exporters cannot write multi-material scenes: geometry still ships
-        geometry_only.export(obj_dir / f"{name}.obj")
+        geom_only.export(obj_dir / f"{name}.obj")
     with zipfile.ZipFile(obj_zip, "w", zipfile.ZIP_DEFLATED) as z:
         for f in obj_dir.iterdir():
             z.write(f, f.name)
@@ -138,4 +147,34 @@ def finalize(raw_glb: str, out_dir: Path, name: str = "model") -> dict:
         "glb_reopens": True,
         "glb_size_kb": round(glb.stat().st_size / 1024, 1),
     }
-    return {"glb": str(glb), "obj_zip": str(obj_zip), "stl": str(stl), "report": report}
+
+    res = {"glb": str(glb), "obj_zip": str(obj_zip), "stl": str(stl), "report": report}
+
+    # 3D Print Pre-Flight Analysis (opt-in on export/click)
+    if run_printability:
+        try:
+            from .printability import analyze_printability
+            report["printability"] = analyze_printability(check)
+        except Exception as e:
+            log.debug("Printability analysis skipped: %s", e)
+
+    # OpenSCAD (.scad) Export (opt-in on export/click)
+    if export_scad:
+        scad = out_dir / f"{name}.scad"
+        try:
+            from .cad_export import export_openscad
+            export_openscad(check, scad, name=name)
+            if scad.exists():
+                res["scad"] = str(scad)
+        except Exception as e:
+            log.debug("OpenSCAD export skipped: %s", e)
+
+    # Optional LOD generation (opt-in on export/click)
+    if generate_lods_flag and n_f > 15000:
+        try:
+            from .optimize import generate_lods
+            res["lods"] = generate_lods(glb, out_dir=out_dir)["lods"]
+        except Exception as e:
+            log.debug("LOD generation skipped: %s", e)
+
+    return res

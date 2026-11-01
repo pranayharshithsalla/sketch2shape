@@ -18,6 +18,7 @@ scipy==1.18.1
 trimesh==5.2.0
 shapely==2.2.0
 mapbox_earcut==2.1.0
+fast-simplification==0.2.0
 # Local AI (TripoSR on CPU/GPU); run `python scripts/setup_local_models.py` once after install
 torch==2.15.0
 transformers==5.22.1

@@ -141,7 +141,7 @@ def _remesh(occ: np.ndarray, pitch: float, origin: np.ndarray, min_faces: int = 
 
 
 def refine(glb: str, analysis, out_glb: str | Path, pitch_px: float = 1.0, strict: bool = True,
-           procedural: bool = True, debug_dir: Path | None = None) -> dict:
+           procedural: bool = True, debug_dir: Path | None = None, side_mask: np.ndarray | None = None) -> dict:
     """Carve + add the model at `glb` against `analysis` (preprocess's InputAnalysis).
     strict: carve exactly to the mask (default); False keeps a 1-voxel tolerance band.
     procedural: rebuild detected strings / wires / spokes as clean cylinders (Phase E) instead
@@ -193,7 +193,14 @@ def refine(glb: str, analysis, out_glb: str | Path, pitch_px: float = 1.0, stric
         bad = int((cols & ~tol).sum())
         if bad > max(6, 0.01 * cols.sum()):
             n0 = int(occ.sum())
-            occ &= tol[:, :, None]
+            tol_3d = tol[:, :, None]
+            if side_mask is not None:
+                try:
+                    side_resized = cv2.resize(side_mask.astype(np.uint8), (shape[2], shape[1]), interpolation=cv2.INTER_NEAREST) > 0
+                    tol_3d = tol_3d & side_resized[None, :, :]
+                except Exception:
+                    pass
+            occ &= tol_3d
             carved_vox += n0 - int(occ.sum())
             new = _remesh(occ, pitch_px, origin)
             if new is not None:

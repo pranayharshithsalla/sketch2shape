@@ -42,3 +42,11 @@ outputs/pytest_hard_*/
 outputs/pytest_*
 outputs/*_retry/
 outputs/run_*_retry/
+
+# Evaluation & CLI test scratch
+outputs/eval_*
+outputs/evaluation_report/
+outputs/test_cli_*
+novel_tests/
+create_novel_test_images.py
+evaluate_all.py
