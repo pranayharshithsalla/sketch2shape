@@ -5,7 +5,7 @@
 **In 30 seconds:** draw a rough sketch (or upload a photo, or just describe it). Sketch2Shape builds a real, textured 3D model that keeps your outline, **holes and thin parts** (handle loops, racket strings, wheel spokes). It scores how faithful the model is to your drawing, and lets you refine it, recolour any part, bake in crisp text, and export `.glb` / `.obj` / `.stl` or view it in AR. It runs on an ordinary CPU laptop.
 
 **Judge quick path (about 2 minutes):**
-1. `./run.sh` (macOS/Linux) or `.\run.ps1` (Windows). It sets itself up on first run, then open http://127.0.0.1:7860.
+1. `./run.sh` (macOS/Linux) or `.\run.ps1` (Windows). It sets itself up on first run, then open http://127.0.0.1:7860 , the google collab link https://1179176696b493b1be.gradio.live/
 2. **Upload** `samples/hard_cases/racket.png` with the prompt `a badminton racket with strings`, then click **Create 3D Shape**.
 3. Expect an open racket head with clean strings. **📐 Accuracy report** shows IoU, thin-part recall and holes found vs expected.
 4. Try **🎨 Colours & materials** (recolour parts), **🔤 Text & logo** (bake text), **📱 AR** (scan the QR), and **Download (.GLB)**.
