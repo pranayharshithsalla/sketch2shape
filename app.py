@@ -472,6 +472,65 @@ def studio_spin(session):
     return make_gif(cur["glb"])
 
 
+def studio_print_preflight(session):
+    cur = session.current if session else None
+    if not cur or not cur.get("glb") or not Path(cur["glb"]).exists():
+        raise gr.Error("Build a 3D model first before running print pre-flight.")
+    from src.export import finalize
+    glb_p = Path(cur["glb"])
+    fin = finalize(str(glb_p), glb_p.parent, name=glb_p.stem, run_printability=True)
+    p_info = fin["report"].get("printability", {})
+    cur["report"]["printability"] = p_info
+
+    ov = p_info.get("overhang", {})
+    st = p_info.get("stability", {})
+    est = p_info.get("estimate", {})
+
+    status_badge = "✅ STABLE" if st.get("is_stable") else f"⚠️ {st.get('rating', 'UNSTABLE')}"
+    support_note = f"⚠️ Requires supports (~{ov.get('support_required_area_pct', 0)}% of surface)" if ov.get("needs_supports") else "✅ Minimal/no supports required"
+    wt_str = "✅ Yes" if p_info.get("watertight") else "❌ No"
+
+    md = (
+        f"### 🖨️ 3D Print Pre-Flight Report\n"
+        f"- **Stability:** **{status_badge}** (tipping angle: **{st.get('tipping_angle_deg', 0)}°**, margin: {st.get('stability_margin', 0)})\n"
+        f"- **Overhangs:** **{ov.get('support_required_area_pct', 0)}%** ({support_note})\n"
+        f"- **Estimated Weight (PLA):** **{est.get('filament_pla_grams', 0)} g** (at ~10cm scaled height, 20% infill)\n"
+        f"- **Estimated Print Time:** ~**{est.get('estimated_print_time_hours', 0)} hrs**\n"
+        f"- **Watertight:** {wt_str}\n"
+    )
+
+    report_view = {
+        **cur["report"],
+        "texture_present": "texture" in str(cur["report"].get("colour", "")),
+        "decals": [d.get("text") or "logo" for d in cur.get("decals") or []],
+        "sketch_fidelity": cur.get("accuracy"),
+        "engine": cur["model"],
+        "build_seconds": cur.get("seconds"),
+    }
+    return gr.Markdown(value=md, visible=True), report_view
+
+
+def studio_export_extra(session):
+    cur = session.current if session else None
+    if not cur or not cur.get("glb") or not Path(cur["glb"]).exists():
+        raise gr.Error("Build a 3D model first before exporting extra formats.")
+    from src.export import finalize
+    glb_p = Path(cur["glb"])
+    fin = finalize(str(glb_p), glb_p.parent, name=glb_p.stem, export_scad=True, generate_lods_flag=True)
+
+    new_files = list(cur.get("files") or [])
+    if fin.get("scad") and Path(fin["scad"]).exists() and fin["scad"] not in new_files:
+        new_files.append(fin["scad"])
+    for lod_name, lod_dict in fin.get("lods", {}).items():
+        lod_path = lod_dict.get("path")
+        if lod_path and Path(lod_path).exists() and lod_path not in new_files:
+            new_files.append(lod_path)
+
+    cur["files"] = new_files
+    gr.Info(f"Exported OpenSCAD (.scad) and {len(fin.get('lods', {}))} LOD models to 'Other formats' below!")
+    return new_files
+
+
 def switch_mode(mode, session):
     """Top-bar mode selector: show the matching input and adapt the prompt hint."""
     editing = session is not None and session.current is not None
@@ -656,8 +715,12 @@ def build() -> gr.Blocks:
                             raw_chk = gr.Checkbox(False, label="Show raw model (before refinement)", interactive=False)
                             acc_imgs = gr.Gallery(show_label=False, columns=2, height=260, allow_preview=True)
                         with gr.Accordion("✅ Validation report", open=False):
+                            with gr.Row():
+                                print_btn = gr.Button("🔍 Run print pre-flight", size="sm")
+                                export_extra_btn = gr.Button("📦 Export OpenSCAD / Mobile LOD", size="sm")
+                            print_preflight_md = gr.Markdown(visible=False)
                             d_report = gr.JSON(show_label=False)
-                        with gr.Accordion("Other formats (.obj + textures, .stl)", open=False):
+                        with gr.Accordion("Other formats (.obj + textures, .stl, .scad, LODs)", open=False):
                             d_files = gr.File(show_label=False, file_count="multiple")
                 session = gr.State(Session())
                 cam = gr.State([45.0, 75.0, None])
@@ -680,6 +743,8 @@ def build() -> gr.Blocks:
                 revert_btn.click(versions_revert, [versions, chat, session], d_out)
                 compare_btn.click(versions_compare, [versions, session], [compare_model, compare_note])
                 spin_btn.click(studio_spin, session, spin_img)
+                print_btn.click(studio_print_preflight, session, [print_preflight_md, d_report])
+                export_extra_btn.click(studio_export_extra, session, d_files)
                 analyse_btn.click(studio_analyse, [mode, d_canvas, d_upload, chat_box, session],
                                   [hole_img, hole_md, session])
                 hole_img.select(studio_toggle_hole, session, [hole_img, session])
