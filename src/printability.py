@@ -23,11 +23,21 @@ def _unit_vector(v: np.ndarray) -> np.ndarray:
     return np.divide(v, np.maximum(norm, 1e-12))
 
 
+def _to_z_up(mesh: trimesh.Trimesh, up_axis: str) -> trimesh.Trimesh:
+    """The analysis works Z-up; Sketch2Shape models are glTF Y-up (stand on -y)."""
+    if up_axis != "y":
+        return mesh
+    m = mesh.copy()
+    m.apply_transform(trimesh.transformations.rotation_matrix(np.pi / 2, [1, 0, 0]))  # +y -> +z
+    return m
+
+
 def analyze_printability(
     mesh_or_scene: trimesh.Trimesh | trimesh.Scene,
     max_overhang_deg: float = 45.0,
     assumed_print_height_cm: float = 10.0,
     infill_ratio: float = 0.20,
+    up_axis: str = "y",
 ) -> dict:
     """Performs comprehensive 3D printing pre-flight analysis on a mesh or scene."""
     if isinstance(mesh_or_scene, trimesh.Scene):
@@ -38,6 +48,7 @@ def analyze_printability(
         mesh = trimesh.util.concatenate(meshes)
     else:
         mesh = mesh_or_scene
+    mesh = _to_z_up(mesh, up_axis)
 
     bounds = mesh.bounds
     extents = bounds[1] - bounds[0]
@@ -175,6 +186,7 @@ def generate_overhang_heatmap(
     mesh: trimesh.Trimesh,
     out_path: str | Path,
     max_overhang_deg: float = 45.0,
+    up_axis: str = "y",
 ) -> str:
     """Generates an overhang angle inspection mesh colored:
       - Green: safe angles (0 to 30 deg)
@@ -182,7 +194,7 @@ def generate_overhang_heatmap(
       - Red: steep overhangs (> 45 deg, supports needed)
     """
     out_path = Path(out_path)
-    normals = _unit_vector(mesh.face_normals)
+    normals = _unit_vector(_to_z_up(mesh, up_axis).face_normals)  # same face order, Z-up
     down_dot = -normals[:, 2]
 
     # Initialize face colors to safe green

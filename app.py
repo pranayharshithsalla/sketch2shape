@@ -5,6 +5,7 @@ import argparse
 import re
 import threading
 import traceback
+from pathlib import Path
 
 import gradio as gr
 import numpy as np

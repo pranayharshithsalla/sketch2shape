@@ -76,7 +76,7 @@ def test_printability_analysis_stable_and_unstable():
     post.apply_translation([0, 0, 1.25])
     stable_mesh = trimesh.util.concatenate([base, post])
 
-    res_stable = analyze_printability(stable_mesh, max_overhang_deg=45.0)
+    res_stable = analyze_printability(stable_mesh, max_overhang_deg=45.0, up_axis="z")
     assert res_stable["stability"]["is_stable"] is True
     assert res_stable["stability"]["rating"] in ("EXCELLENT", "STABLE")
     assert res_stable["stability"]["stability_margin"] > 0.5
@@ -88,7 +88,7 @@ def test_printability_analysis_stable_and_unstable():
     cantilever.apply_translation([3.0, 0, 2.0])  # Heavy mass out at X ~ 3.0
     unstable_mesh = trimesh.util.concatenate([foot, cantilever])
 
-    res_unstable = analyze_printability(unstable_mesh, max_overhang_deg=45.0)
+    res_unstable = analyze_printability(unstable_mesh, max_overhang_deg=45.0, up_axis="z")
     assert res_unstable["stability"]["is_stable"] is False
     assert res_unstable["stability"]["rating"].startswith("UNSTABLE")
     assert res_unstable["stability"]["stability_margin"] == 0.0
@@ -97,7 +97,7 @@ def test_printability_analysis_stable_and_unstable():
 def test_overhang_heatmap(sample_scene, tmp_path):
     merged = trimesh.util.concatenate(list(sample_scene.geometry.values()))
     out_file = tmp_path / "heatmap.glb"
-    p = generate_overhang_heatmap(merged, out_file)
+    p = generate_overhang_heatmap(merged, out_file, up_axis="z")
     assert Path(p).exists()
     loaded = trimesh.load(p, force="mesh")
     assert isinstance(loaded.visual, trimesh.visual.ColorVisuals)
