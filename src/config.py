@@ -61,7 +61,7 @@ MAX_RETRIES = int(os.getenv("MAX_RETRIES", "2"))
 # Structural accuracy (0.4 IoU + 0.3 thin-feature recall + 0.3 hole match): below the target the
 # model is carved/extended to the sketch, then rebuilt with another engine (best result kept)
 ACCURACY_TARGET = float(os.getenv("ACCURACY_TARGET", "0.9"))
-ACCURACY_RETRY = os.getenv("ACCURACY_RETRY", "1") != "0"
+ACCURACY_RETRY = os.getenv("ACCURACY_RETRY", "0") != "0"  # backend switch costs a 2nd full build (60-100 s on CPU): opt-in
 
 # Fidelity score weights (tuned on examples/, see REPORT.md)
 FIDELITY_W_SIL = 0.6

@@ -83,7 +83,7 @@ CONTROL = {  # what an attached sketch/photo (or a text edit) is allowed to chan
               "colours, materials, textures and finish (from the attached image if there is one).] "),
 }
 FIDELITY_RETRY_BELOW = 0.62   # front-silhouette accuracy that triggers an automatic re-plan
-MAX_FIDELITY_RETRIES = 2
+MAX_FIDELITY_RETRIES = 1  # each retry is another Gemini plan + build
 
 
 def turn(session: Session, message: str, image=None, control: str = "both",

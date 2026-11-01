@@ -353,7 +353,7 @@ def ensure_accuracy(raw_glb: str, analysis, out_dir: Path, target: float | None 
     best_glb, best = raw_glb, _public(before)
     need = before["accuracy"] < target or (procedural and bool(analysis.families))
     if need:
-        for k, pitch in enumerate((1.0, 0.75)):
+        for k, pitch in enumerate((1.0,)):  # one fast pass; a finer 2nd pass was too slow on CPU
             try:
                 r = refine(raw_glb, analysis, Path(out_dir) / f"refined_{k + 1}.glb", pitch_px=pitch,
                            procedural=procedural, debug_dir=Path(out_dir) / "debug")
